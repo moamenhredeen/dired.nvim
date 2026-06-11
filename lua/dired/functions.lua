@@ -6,6 +6,236 @@ local M = {}
 
 M.path_separator = config.get("path_separator")
 
+local archive_formats = {
+    [".zip"] = { executable = "zip", create = { "zip", "-r" }, extract = "zip" },
+    [".tar"] = { executable = "tar", create = { "tar", "-cf" }, extract = "tar" },
+    [".tar.gz"] = { executable = "tar", create = { "tar", "-czf" }, extract = "tar" },
+    [".tgz"] = { executable = "tar", create = { "tar", "-czf" }, extract = "tar" },
+    [".tar.bz2"] = { executable = "tar", create = { "tar", "-cjf" }, extract = "tar" },
+    [".tbz2"] = { executable = "tar", create = { "tar", "-cjf" }, extract = "tar" },
+    [".tar.xz"] = { executable = "tar", create = { "tar", "-cJf" }, extract = "tar" },
+    [".txz"] = { executable = "tar", create = { "tar", "-cJf" }, extract = "tar" },
+}
+
+local archive_extensions = { ".tar.bz2", ".tar.gz", ".tar.xz", ".tbz2", ".tgz", ".txz", ".tar", ".zip" }
+
+local function get_archive_format(path)
+    local lower_path = path:lower()
+    for _, extension in ipairs(archive_extensions) do
+        if lower_path:sub(-#extension) == extension then
+            return archive_formats[extension], extension
+        end
+    end
+end
+
+local function executable_exists(executable)
+    if vim.fn.executable(executable) == 1 then
+        return true
+    end
+    vim.notify(string.format("Dired: `%s` is required for this operation.", executable), vim.log.levels.ERROR)
+    return false
+end
+
+local function run_process(args, cwd, callback)
+    vim.system(args, { cwd = cwd, text = true }, function(result)
+        vim.schedule(function()
+            if result.code ~= 0 then
+                local message = result.stderr ~= "" and result.stderr or result.stdout
+                vim.notify(vim.trim(message or "Command failed"), vim.log.levels.ERROR)
+                callback(false)
+                return
+            end
+            callback(true)
+        end)
+    end)
+end
+
+function M.compress_files(files, directory, callback)
+    for _, file in ipairs(files) do
+        if fs.get_simplified_path(file.parent_dir) ~= fs.get_simplified_path(directory) then
+            vim.notify("Dired: Compression only supports files in the current directory.", vim.log.levels.ERROR)
+            return
+        end
+    end
+
+    local default_name = #files == 1 and (files[1].filename .. ".zip") or "archive.zip"
+    local archive_name = vim.fn.input("Archive name: ", default_name, "file")
+    if archive_name == "" then
+        return
+    end
+
+    local archive_path = archive_name
+    if not archive_name:match("^/") then
+        archive_path = fs.join_paths(directory, archive_name)
+    end
+    archive_path = vim.fn.fnamemodify(archive_path, ":p")
+    local format, extension = get_archive_format(archive_path)
+    if not format then
+        vim.notify("Dired: Unsupported archive extension.", vim.log.levels.ERROR)
+        return
+    end
+    if not executable_exists(format.executable) then
+        return
+    end
+    local archive_exists = fs.file_exists(archive_path)
+    if archive_exists then
+        local choice = vim.fn.confirm("Archive already exists. Replace it?", "&Yes\n&No", 2)
+        if choice ~= 1 then
+            return
+        end
+    end
+
+    local temporary_path = archive_path .. ".dired-tmp" .. extension
+    if fs.file_exists(temporary_path) then
+        vim.loop.fs_unlink(temporary_path)
+    end
+    local args = vim.deepcopy(format.create)
+    table.insert(args, temporary_path)
+    table.insert(args, "--")
+    for _, file in ipairs(files) do
+        table.insert(args, file.filename)
+    end
+
+    run_process(args, directory, function(success)
+        if not success then
+            vim.loop.fs_unlink(temporary_path)
+            callback(false)
+            return
+        end
+
+        local backup_path = archive_path .. ".dired-backup"
+        if archive_exists then
+            if fs.file_exists(backup_path) then
+                vim.loop.fs_unlink(backup_path)
+            end
+            local backed_up, backup_err = vim.loop.fs_rename(archive_path, backup_path)
+            if not backed_up then
+                vim.loop.fs_unlink(temporary_path)
+                vim.notify("Dired: Could not replace archive: " .. tostring(backup_err), vim.log.levels.ERROR)
+                callback(false)
+                return
+            end
+        end
+        local renamed, rename_err = vim.loop.fs_rename(temporary_path, archive_path)
+        if not renamed then
+            if archive_exists then
+                vim.loop.fs_rename(backup_path, archive_path)
+            end
+            vim.loop.fs_unlink(temporary_path)
+            vim.notify("Dired: Could not finalize archive: " .. tostring(rename_err), vim.log.levels.ERROR)
+            callback(false)
+            return
+        end
+        if archive_exists then
+            vim.loop.fs_unlink(backup_path)
+        end
+
+        if fs.get_simplified_path(vim.fn.fnamemodify(archive_path, ":h")) == fs.get_simplified_path(directory) then
+            display.goto_filename = vim.fn.fnamemodify(archive_path, ":t")
+        end
+        vim.notify(string.format("Dired: Created %s", archive_path))
+        callback(true)
+    end)
+end
+
+function M.extract_files(files, directory, callback)
+    local destination = vim.fn.input("Extract to: ", directory, "dir")
+    if destination == "" then
+        return
+    end
+    if not destination:match("^/") then
+        destination = fs.join_paths(directory, destination)
+    end
+    destination = vim.fn.fnamemodify(destination, ":p")
+    if vim.fn.isdirectory(destination) == 0 and vim.fn.mkdir(destination, "p") == 0 then
+        vim.notify("Dired: Could not create extraction directory.", vim.log.levels.ERROR)
+        return
+    end
+
+    local index = 1
+    local function extract_next()
+        local file = files[index]
+        if not file then
+            vim.notify(string.format("Dired: Extracted %d archive(s) to %s", #files, destination))
+            callback(true)
+            return
+        end
+
+        local format = get_archive_format(file.filepath)
+        if not format then
+            vim.notify(string.format("Dired: Unsupported archive: %s", file.filename), vim.log.levels.ERROR)
+            callback(false)
+            return
+        end
+        local args
+        if format.extract == "zip" then
+            args = { "unzip", "-n", file.filepath, "-d", destination }
+            if not executable_exists("unzip") then
+                callback(false)
+                return
+            end
+        else
+            if not executable_exists("tar") then
+                callback(false)
+                return
+            end
+            args = { "tar", "-xf", file.filepath, "-C", destination }
+        end
+
+        run_process(args, directory, function(success)
+            if not success then
+                callback(false)
+                return
+            end
+            index = index + 1
+            extract_next()
+        end)
+    end
+
+    extract_next()
+end
+
+function M.chmod_files(files)
+    local stat = vim.loop.fs_stat(files[1].filepath)
+    if not stat then
+        vim.notify("Dired: Could not read the current mode.", vim.log.levels.ERROR)
+        return false
+    end
+    local current_mode = stat.mode % 512
+    local input = vim.fn.input("Mode (octal): ", string.format("%03o", current_mode))
+    if input == "" then
+        return false
+    end
+    if not input:match("^[0-7][0-7][0-7][0-7]?$") then
+        vim.notify("Dired: Mode must be three or four octal digits.", vim.log.levels.ERROR)
+        return false
+    end
+
+    local mode = tonumber(input, 8)
+    for _, file in ipairs(files) do
+        local success, err = vim.loop.fs_chmod(file.filepath, mode)
+        if not success then
+            vim.notify(string.format("Dired: chmod failed for %s: %s", file.filename, err), vim.log.levels.ERROR)
+            return false
+        end
+    end
+    vim.notify(string.format("Dired: Changed mode on %d item(s).", #files))
+    return true
+end
+
+function M.touch_files(files)
+    local timestamp = os.time()
+    for _, file in ipairs(files) do
+        local success, err = vim.loop.fs_utime(file.filepath, timestamp, timestamp)
+        if not success then
+            vim.notify(string.format("Dired: touch failed for %s: %s", file.filename, err), vim.log.levels.ERROR)
+            return false
+        end
+    end
+    vim.notify(string.format("Dired: Updated timestamps on %d item(s).", #files))
+    return true
+end
+
 local function run_in_compile_mode(command, directory)
     vim.api.nvim_create_autocmd("FileType", {
         pattern = "compilation",

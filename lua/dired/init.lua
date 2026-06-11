@@ -26,6 +26,10 @@ M.paste = dired.paste_file
 M.mark = dired.mark_file
 M.mark_range = dired.mark_file_range
 M.delete_marked = dired.delete_marked
+M.compress = dired.compress_files
+M.extract = dired.extract_files
+M.chmod = dired.chmod_files
+M.touch = dired.touch_files
 M.cmd = dired.shell_cmd
 M.cmd_marked = dired.shell_cmd_marked
 M.toggle_hidden_files = dired.toggle_hidden_files
@@ -127,6 +131,10 @@ function M.setup(opts)
     vim.cmd([[command! DiredEnter lua require'dired'.enter()]])
     vim.cmd([[command! DiredCreate lua require'dired'.create()]])
     vim.cmd([[command! DiredDuplicate lua require'dired'.duplicate()]])
+    vim.cmd([[command! DiredCompress lua require'dired'.compress()]])
+    vim.cmd([[command! DiredExtract lua require'dired'.extract()]])
+    vim.cmd([[command! DiredChmod lua require'dired'.chmod()]])
+    vim.cmd([[command! DiredTouch lua require'dired'.touch()]])
     vim.cmd([[command! DiredToggleHidden lua require'dired'.toggle_hidden_files()]])
     vim.cmd([[command! -nargs=? -complete=shellcmd DiredShellCmd lua require'dired'.cmd(<q-args>)]])
     vim.cmd([[command! -nargs=? -complete=shellcmd DiredShellCmdMarked lua require'dired'.cmd_marked(<q-args>)]])
@@ -161,6 +169,10 @@ function M.setup(opts)
     map("", "<Plug>(dired_unmark_all)", ":DiredUnmarkAll<CR>", opt)
     map("", "<Plug>(dired_create)", ":DiredCreate<CR>", opt)
     map("", "<Plug>(dired_duplicate)", ":DiredDuplicate<CR>", opt)
+    map("", "<Plug>(dired_compress)", ":DiredCompress<CR>", opt)
+    map("", "<Plug>(dired_extract)", ":DiredExtract<CR>", opt)
+    map("", "<Plug>(dired_chmod)", ":DiredChmod<CR>", opt)
+    map("", "<Plug>(dired_touch)", ":DiredTouch<CR>", opt)
     map("", "<Plug>(dired_shell_cmd)", ":DiredShellCmd<CR>", opt)
     map("", "<Plug>(dired_shell_cmd_marked)", ":DiredShellCmdMarked<CR>", opt)
     map("", "<Plug>(dired_toggle_hidden)", ":DiredToggleHidden<CR>", opt)
@@ -192,6 +204,14 @@ function M.setup(opts)
             map(0, "n", config.get("keybinds").dired_delete, "<Plug>(dired_delete)", opt)
             map(0, "v", config.get("keybinds").dired_delete_range, "<Plug>(dired_delete_range)", opt)
             map(0, "n", config.get("keybinds").dired_duplicate, "<Plug>(dired_duplicate)", opt)
+            map(0, "n", config.get("keybinds").dired_compress, "<Plug>(dired_compress)", opt)
+            map(0, "n", config.get("keybinds").dired_extract, "<Plug>(dired_extract)", opt)
+            if config.get("keybinds").dired_chmod then
+                map(0, "n", config.get("keybinds").dired_chmod, "<Plug>(dired_chmod)", opt)
+            end
+            if config.get("keybinds").dired_touch then
+                map(0, "n", config.get("keybinds").dired_touch, "<Plug>(dired_touch)", opt)
+            end
             map(0, "n", config.get("keybinds").dired_copy, "<Plug>(dired_copy)", opt)
             map(0, "v", config.get("keybinds").dired_copy_range, "<Plug>(dired_copy_range)", opt)
             map(0, "n", config.get("keybinds").dired_copy_marked, "<Plug>(dired_copy_marked)", opt)

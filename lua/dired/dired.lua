@@ -240,6 +240,71 @@ function M.toggle_colors()
     vim.notify(string.format("dired_show_colors: %s", vim.inspect(vim.g.dired_show_colors)))
 end
 
+local function get_operation_files()
+    if #marker.marked_files > 0 then
+        return marker.marked_files
+    end
+
+    local filename = display.get_filename_from_listing(vim.api.nvim_get_current_line())
+    if filename == nil or filename == "." or filename == ".." then
+        vim.notify("Dired: Place the cursor on a file or mark one or more files.", vim.log.levels.ERROR)
+        return
+    end
+
+    local dir_files = ls.fs_entry.get_directory(vim.g.current_dired_path)
+    local file = ls.get_file_by_filename(dir_files, filename)
+    if not file then
+        vim.notify("Dired: Could not resolve the selected file.", vim.log.levels.ERROR)
+        return
+    end
+    return { file }
+end
+
+local function refresh_after_async(buffer, path)
+    return function()
+        if vim.api.nvim_buf_is_valid(buffer)
+            and vim.api.nvim_get_current_buf() == buffer
+            and vim.bo[buffer].filetype == "dired"
+        then
+            display.render(path)
+        end
+    end
+end
+
+function M.compress_files()
+    local files = get_operation_files()
+    if not files then
+        return
+    end
+    local buffer = vim.api.nvim_get_current_buf()
+    local path = vim.g.current_dired_path
+    funcs.compress_files(files, path, refresh_after_async(buffer, path))
+end
+
+function M.extract_files()
+    local files = get_operation_files()
+    if not files then
+        return
+    end
+    local buffer = vim.api.nvim_get_current_buf()
+    local path = vim.g.current_dired_path
+    funcs.extract_files(files, path, refresh_after_async(buffer, path))
+end
+
+function M.chmod_files()
+    local files = get_operation_files()
+    if files and funcs.chmod_files(files) then
+        display.render(vim.g.current_dired_path)
+    end
+end
+
+function M.touch_files()
+    local files = get_operation_files()
+    if files and funcs.touch_files(files) then
+        display.render(vim.g.current_dired_path)
+    end
+end
+
 -- rename a file
 function M.rename_file()
     local dir = nil

@@ -103,6 +103,10 @@ You can use the following commands to add in your custom keybinds.
 | DiredPaste           | Paste copied or moved files in the current directory   |
 | DiredEnter           | Open the file or directory at the cursor               |
 | DiredCreate          | Create a new directory                                 |
+| DiredCompress        | Compress the file under cursor or marked files         |
+| DiredExtract         | Extract the archive under cursor or marked archives    |
+| DiredChmod           | Change mode of the file under cursor or marked files   |
+| DiredTouch           | Update timestamps of the file under cursor or marked files |
 | DiredShellCmd        | Apply any shell command to file/directory under cursor (shell cmd completion)|
 | DiredShellCmdMarked  | Apply any shell command to marked files/directories|
 | DiredToggleHidden    | Toggle the visibility of hidden files                  |
@@ -125,6 +129,8 @@ Inside a directory buffer, there are the following keybindings:
 | **`P`**| Paste files in the current directory.             |
 | **`D`**| Delete directories and files (both in normal and visual mode). |
 | **`R`**| Rename directories and files.                     |
+| **`Z`**| Compress the current or marked files.             |
+| **`E`**| Extract the current or marked archives.           |
 | **`MD`**| Delete marked files.                              |
 | **`MC`**| Copy marked files.                                |
 | **`MX`**| Move marked files.                                |
@@ -149,6 +155,8 @@ The default keybinds are given below.
     dired_create = "d",
     dired_delete = "D",
     dired_delete_range = "D",
+    dired_compress = "Z",
+    dired_extract = "E",
     dired_copy = "C",
     dired_copy_range = "C",
     dired_copy_marked = "MC",
@@ -169,6 +177,11 @@ The default keybinds are given below.
     dired_quit = "q",
 }
 ```
+
+`DiredCompress` supports `.zip`, `.tar`, `.tar.gz`, `.tgz`, `.tar.bz2`,
+`.tbz2`, `.tar.xz`, and `.txz`. `DiredChmod` and `DiredTouch` have no default
+keybindings, but can be configured with `dired_chmod` and `dired_touch`. ZIP
+operations require `zip` and `unzip`; TAR formats require `tar`.
 
 # Colors
 
