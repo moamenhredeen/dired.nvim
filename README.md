@@ -14,13 +14,17 @@ Different types of files in dired.nvim
 
 ## Installation
 
-Requires [Neovim 0.6](https://github.com/neovim/neovim/releases/tag/v0.6.0) or
+Requires [Neovim 0.10](https://github.com/neovim/neovim/releases/tag/v0.10.0) or
 higher.
 
-> [Packer.nvim](https://github.com/wbthomason/packer.nvim)
+> [lazy.nvim](https://github.com/folke/lazy.nvim)
 ```lua
-use {
+{
     "X3eRo0/dired.nvim",
+    dependencies = {
+        "nvim-lua/plenary.nvim",
+        { "ej-shafran/compile-mode.nvim", version = "^5.0.0" },
+    },
     config = function()
         require("dired").setup {
             path_separator = "/",

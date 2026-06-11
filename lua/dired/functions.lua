@@ -6,6 +6,27 @@ local M = {}
 
 M.path_separator = config.get("path_separator")
 
+local function run_in_compile_mode(command, directory)
+    vim.api.nvim_create_autocmd("FileType", {
+        pattern = "compilation",
+        once = true,
+        callback = function(args)
+            vim.schedule(function()
+                local windows = vim.fn.win_findbuf(args.buf)
+                if windows[1] and vim.api.nvim_win_is_valid(windows[1]) then
+                    vim.api.nvim_set_current_win(windows[1])
+                end
+            end)
+        end,
+    })
+
+    vim.g.compilation_directory = directory
+    require("compile-mode").compile({
+        args = command,
+        smods = { split = "botright" },
+    })
+end
+
 function M.rename_file(fs_t)
     local new_name = vim.fn.input({
         prompt = string.format("Enter New Name (%s): ", fs_t.filename),
@@ -89,9 +110,8 @@ function M.shell_cmd(fs_t)
     if cmd == "" then
         return
     end
-    -- Escape filename to handle spaces and special characters.
-    local xcmd = cmd..' '..vim.fn.fnameescape(fs_t.filename)
-    vim.cmd('botright terminal ' .. xcmd)
+    local xcmd = cmd .. " " .. vim.fn.shellescape(fs_t.filepath)
+    run_in_compile_mode(xcmd, fs_t.parent_dir)
 end
 
 function M.shell_cmd_on_marked_files(fs_t_list)
@@ -101,17 +121,16 @@ function M.shell_cmd_on_marked_files(fs_t_list)
 
     local cmd = vim.fn.input("Enter command: ", "", "shellcmd")
     if cmd == "" then
-	return
+        return
     end
 
-    local file_list_str = ""
+    local file_list = {}
     for _, fs_t in ipairs(fs_t_list) do
-	-- Escape each filename to handle spaces and special characters
-	file_list_str = file_list_str .. " " .. vim.fn.fnameescape(fs_t.filename)
+        table.insert(file_list, vim.fn.shellescape(fs_t.filepath))
     end
 
-    local xcmd = cmd .. file_list_str
-    vim.cmd('botright terminal ' .. xcmd)
+    local xcmd = cmd .. " " .. table.concat(file_list, " ")
+    run_in_compile_mode(xcmd, vim.g.current_dired_path)
 end
 
 function M.duplicate_file(fs_t)
