@@ -79,6 +79,10 @@ Run the command `:Dired` to open a buffer for your current
 directory. Press `-` in any buffer to open a directory buffer for its parent.
 Editing a directory will also open up a buffer, overriding Netrw.
 
+Directory navigation reuses the current Dired buffer. Opening a file hides
+that buffer, so `<C-^>` returns to the same Dired session and directory. Use
+`DiredQuit` to delete the session buffer.
+
 # Commands
 
 You can use the following commands to add in your custom keybinds.

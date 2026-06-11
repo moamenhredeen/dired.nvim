@@ -247,7 +247,16 @@ function M.setup(opts)
     -- open dired when opening a directory
     vim.api.nvim_create_autocmd("BufEnter", {
         pattern = "*",
-        command = "if isdirectory(expand('%')) && !&modified | execute 'lua require(\"dired\").init()' | endif",
+        callback = function(args)
+            if vim.bo[args.buf].filetype == "dired" and vim.b[args.buf].dired_path then
+                vim.g.current_dired_path = vim.b[args.buf].dired_path
+                if vim.g.dired_override_cwd then
+                    vim.api.nvim_set_current_dir(vim.b[args.buf].dired_path)
+                end
+            elseif vim.fn.isdirectory(vim.api.nvim_buf_get_name(args.buf)) == 1 and not vim.bo[args.buf].modified then
+                require("dired").init()
+            end
+        end,
         group = dired_group,
     })
 

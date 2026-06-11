@@ -20,30 +20,16 @@ local function normalize_path(path)
     return path
 end
 
--- initialize dired buffer
-function M.init_dired()
-    -- preserve altbuffer
-    local altbuf = vim.fn.bufnr("#")
-    local path = normalize_path(vim.fn.fnamemodify(vim.fn.expand("%"), ":p"):gsub("\\", "/"))
+local function dired_buffer_name(buffer, path)
+    return string.format("dired://%d%s", buffer, path)
+end
 
-    -- set current path
+local function set_dired_path(path)
+    path = normalize_path(vim.fn.fnamemodify(path, ":p"):gsub("\\", "/"))
+    local buffer = vim.api.nvim_get_current_buf()
+    vim.b.dired_path = path
     vim.g.current_dired_path = path
-    -- set buffer name to path
-    vim.api.nvim_buf_set_name(0, path) -- 0 is current buffer
-
-    vim.bo.filetype = "dired"
-    vim.bo.swapfile = false
-    vim.bo.buftype = "acwrite"
-    vim.bo.bufhidden = "wipe"
-    vim.bo.modifiable = true
-
-    if altbuf ~= -1 then
-        vim.fn.setreg("#", altbuf)
-    end
-
-    if fs.is_directory(path) ~= true then
-        path = fs.get_parent_path(path)
-    end
+    vim.api.nvim_buf_set_name(buffer, dired_buffer_name(buffer, path))
 
     if vim.g.dired_override_cwd then
         vim.api.nvim_set_current_dir(path)
@@ -52,25 +38,52 @@ function M.init_dired()
     display.render(path)
 end
 
+-- initialize dired buffer
+function M.init_dired()
+    -- preserve altbuffer
+    local altbuf = vim.fn.bufnr("#")
+    local path = vim.b.dired_path
+        or normalize_path(vim.fn.fnamemodify(vim.fn.expand("%"), ":p"):gsub("\\", "/"))
+
+    vim.bo.filetype = "dired"
+    vim.bo.swapfile = false
+    vim.bo.buftype = "acwrite"
+    vim.bo.bufhidden = "hide"
+    vim.bo.modifiable = true
+
+    if altbuf ~= -1 then
+        vim.fn.setreg("#", altbuf)
+    end
+
+    set_dired_path(path)
+end
+
 -- open a new directory
 function M.open_dir(path)
     if path == "" then
-        if vim.g.dired_override_cwd then
-            path = "."
+        if vim.bo.filetype == "dired" then
+            path = vim.b.dired_path
         else
             path = vim.fn.fnamemodify(vim.fn.expand("%"), ":p"):gsub("\\", "/")
+            if not fs.is_directory(path) then
+                path = fs.get_parent_path(path)
+            end
         end
     end
 
-    path = fs.get_simplified_path(fs.get_absolute_path(path))
-
-    local keep_alt = ""
+    if vim.bo.filetype == "dired" and not path:match("^/") and not path:match("^%a:[/\\]") then
+        path = fs.join_paths(vim.b.dired_path, path)
+    end
+    path = normalize_path(vim.fn.fnamemodify(path, ":p"):gsub("\\", "/"))
     if vim.bo.filetype == "dired" then
-        keep_alt = "keepalt"
+        if path ~= vim.b.dired_path then
+            history.push_path(vim.b.dired_path)
+            set_dired_path(path)
+        end
+        return
     end
 
-    history.push_path(vim.g.current_dired_path)
-    vim.cmd(string.format("%s noautocmd edit %s", keep_alt, vim.fn.fnameescape(path)))
+    vim.cmd(string.format("noautocmd edit %s", vim.fn.fnameescape(path)))
     M.init_dired()
 end
 
@@ -95,59 +108,14 @@ function M.enter_dir()
     end
 
     if file.filetype == "directory" then
-        vim.cmd(string.format("keepalt noautocmd edit %s", vim.fn.fnameescape(file.filepath)))
+        history.push_path(vim.b.dired_path)
+        set_dired_path(file.filepath)
     else
-        vim.cmd(string.format("keepalt edit %s", vim.fn.fnameescape(file.filepath)))
+        vim.cmd(string.format("edit %s", vim.fn.fnameescape(file.filepath)))
     end
 
-    if file.filetype == "directory" then
-        history.push_path(vim.g.current_dired_path)
-        M.init_dired()
-    end
-
-    -- if file is a directory then enter inside the directory
-    -- if file is just a normal file then replace the dired buffer
-    -- with that file
-end
-
-function M.buffer_state(opts)
-    local bufnrs = vim.tbl_filter(function(bufnr)
-        if 1 ~= vim.fn.buflisted(bufnr) then
-            return false
-        end
-        if bufnr == vim.api.nvim_get_current_buf() then
-            return false
-        end
-
-        local bufname = vim.api.nvim_buf_get_name(bufnr)
-        return true
-    end, vim.api.nvim_list_bufs())
-    if not next(bufnrs) then
-        return
-    end
-
-    local buffers = {}
-    local default_selection_idx = 1
-    for _, bufnr in ipairs(bufnrs) do
-        local flag = bufnr == vim.fn.bufnr("") and "%" or (bufnr == vim.fn.bufnr("#") and "#" or " ")
-
-        if opts.sort_lastused and not opts.ignore_current_buffer and flag == "#" then
-            default_selection_idx = 2
-        end
-
-        local element = {
-            bufnr = bufnr,
-            flag = flag,
-        }
-
-        if opts.sort_lastused and (flag == "#" or flag == "%") then
-            local idx = ((buffers[1] ~= nil and buffers[1].flag == "%") and 2 or 1)
-            table.insert(buffers, idx, element)
-        else
-            table.insert(buffers, element)
-        end
-    end
-    return buffers
+    -- Directory navigation stays in this buffer. Opening a file hides it so
+    -- the alternate-buffer command can return to the same Dired session.
 end
 
 -- quit already opened Dired buffer
@@ -156,25 +124,25 @@ function M.quit_buf()
         return
     end
 
-    local opts = { sort_lastused = true }
-    local buffers = M.buffer_state(opts)
-    if buffers == nil then
-        return
+    local dired_buffer = vim.api.nvim_get_current_buf()
+    local alternate = vim.fn.bufnr("#")
+    if alternate >= 0 and vim.api.nvim_buf_is_valid(alternate) and alternate ~= dired_buffer then
+        vim.api.nvim_set_current_buf(alternate)
+    else
+        vim.cmd("enew")
     end
-    local cur_buf = buffers[1]
-    if cur_buf == nil or cur_buf.flag ~= "#" then
-        return
-    end
-    vim.api.nvim_set_current_buf(cur_buf.bufnr)
+    vim.api.nvim_buf_delete(dired_buffer, { force = true })
 end
 
 function M.go_back()
     local last_path = history.pop_path()
-    M.open_dir(last_path)
+    if last_path then
+        set_dired_path(last_path)
+    end
 end
 
 function M.go_up()
-    local current_path = vim.g.current_dired_path
+    local current_path = vim.b.dired_path
     display.goto_filename = fs.get_filename(current_path)
     M.open_dir(fs.get_parent_path(current_path))
 end
