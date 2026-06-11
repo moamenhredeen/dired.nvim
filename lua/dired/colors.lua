@@ -3,7 +3,6 @@ local fs = require("dired.fs")
 local ut = require("dired.utils")
 local mk = require("dired.marker")
 local cb = require("dired.clipboard")
-local nt = require("nui.text")
 
 local M = {}
 
@@ -136,7 +135,6 @@ function M.get_component_str(component)
 end
 
 function M.get_colored_component_str(component)
-    -- return nui_line
     local permcolor = M.get_permission_color()
     local nlinkcolor = M.get_nlinks_color()
     local ownercolor = M.get_owner_color()
@@ -150,54 +148,61 @@ function M.get_colored_component_str(component)
     local text_group = {}
     if vim.g.dired_hide_details then
         text_group = {
-            nt(component.filename, fcolor_p),
+            { text = component.filename, highlight = fcolor_p },
         }
     else
         if vim.g.dired_show_icons == true then
             text_group = {
-                nt(component.permissions, permcolor),
-                nt(component.nlinks, nlinkcolor),
-                nt(component.owner, ownercolor),
-                nt(component.group, groupcolor),
-                nt(component.size, sizecolor),
-                nt(component.month, monthcolor),
-                nt(component.day, daycolor),
-                nt(component.ftime, ftimecolor),
-                nt(component.ficon, ftimecolor),
-                nt(component.filename, fcolor_p),
+                { text = component.permissions, highlight = permcolor },
+                { text = component.nlinks, highlight = nlinkcolor },
+                { text = component.owner, highlight = ownercolor },
+                { text = component.group, highlight = groupcolor },
+                { text = component.size, highlight = sizecolor },
+                { text = component.month, highlight = monthcolor },
+                { text = component.day, highlight = daycolor },
+                { text = component.ftime, highlight = ftimecolor },
+                { text = component.ficon, highlight = ftimecolor },
+                { text = component.filename, highlight = fcolor_p },
             }
         else
             text_group = {
-                nt(component.permissions, permcolor),
-                nt(component.nlinks, nlinkcolor),
-                nt(component.owner, ownercolor),
-                nt(component.group, groupcolor),
-                nt(component.size, sizecolor),
-                nt(component.month, monthcolor),
-                nt(component.day, daycolor),
-                nt(component.ftime, ftimecolor),
-                nt(component.filename, fcolor_p),
+                { text = component.permissions, highlight = permcolor },
+                { text = component.nlinks, highlight = nlinkcolor },
+                { text = component.owner, highlight = ownercolor },
+                { text = component.group, highlight = groupcolor },
+                { text = component.size, highlight = sizecolor },
+                { text = component.month, highlight = monthcolor },
+                { text = component.day, highlight = daycolor },
+                { text = component.ftime, highlight = ftimecolor },
+                { text = component.filename, highlight = fcolor_p },
             }
         end
     end
 
     if component.fs_t.filetype == "link" then
         local linktarget = fs.get_symlink(component.fs_t.filepath)
-        table.insert(text_group, nt("->"))
-        table.insert(text_group, nt(linktarget, fcolor_s))
+        table.insert(text_group, { text = "->" })
+        table.insert(text_group, { text = linktarget, highlight = fcolor_s })
     end
 
-    local line = {}
-    local seperator = nt(" ")
-    for i = 1, #text_group do
-        table.insert(line, text_group[i])
-        if i ~= #text_group then
-            table.insert(line, seperator)
+    local line = ""
+    local highlights = {}
+    for i, text in ipairs(text_group) do
+        local start_col = #line
+        line = line .. text.text
+        if text.highlight then
+            table.insert(highlights, {
+                group = text.highlight,
+                start_col = start_col,
+                end_col = #line,
+            })
+        end
+        if i < #text_group then
+            line = line .. " "
         end
     end
 
-    -- returns component and formatted line
-    return { component = component, line = line }
+    return { component = component, line = line, highlights = highlights }
 end
 
 return M

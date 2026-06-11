@@ -2,11 +2,10 @@
 local fs = require("dired.fs")
 local ls = require("dired.ls")
 local config = require("dired.config")
-local nui_line = require("nui.line")
-local nui_text = require("nui.text")
 local utils = require("dired.utils")
 local colors = require("dired.colors")
 local M = {}
+local highlight_namespace = vim.api.nvim_create_namespace("dired")
 
 -- fill the buffer with directory contents
 -- buffer to be flushed in neovim buffer
@@ -30,12 +29,29 @@ end
 function M.flush_buffer()
     local undolevels = vim.bo.undolevels
     vim.bo.undolevels = -1
+    local buffer = vim.api.nvim_get_current_buf()
     if vim.g.dired_show_colors then
-        for i, line in ipairs(M.buffer) do
-            line:render(0, -1, i)
+        local lines = {}
+        for _, entry in ipairs(M.buffer) do
+            table.insert(lines, entry.line)
+        end
+        vim.api.nvim_buf_set_lines(buffer, 0, -1, true, lines)
+        vim.api.nvim_buf_clear_namespace(buffer, highlight_namespace, 0, -1)
+        for row, entry in ipairs(M.buffer) do
+            for _, highlight in ipairs(entry.highlights) do
+                vim.api.nvim_buf_add_highlight(
+                    buffer,
+                    highlight_namespace,
+                    highlight.group,
+                    row - 1,
+                    highlight.start_col,
+                    highlight.end_col
+                )
+            end
         end
     else
-        vim.api.nvim_buf_set_lines(0, 0, -1, true, M.buffer)
+        vim.api.nvim_buf_set_lines(buffer, 0, -1, true, M.buffer)
+        vim.api.nvim_buf_clear_namespace(buffer, highlight_namespace, 0, -1)
     end
 
     vim.bo.undolevels = undolevels
@@ -63,8 +79,8 @@ function M.get_directory_listing(directory)
     end
 
     if vim.g.dired_show_colors then
-        info1 = { nui_text(string.format("%s:", fs.get_simplified_path(directory))) }
-        info2 = { nui_text(string.format("total used in directory %s:", dir_size_str)) }
+        info1 = string.format("%s:", fs.get_simplified_path(directory))
+        info2 = string.format("total used in directory %s:", dir_size_str)
     else
         info1 = string.format("%s:", fs.get_simplified_path(directory))
         info2 = string.format("total used in directory %s:", dir_size_str)
@@ -76,8 +92,16 @@ function M.get_directory_listing(directory)
         vim.g.dired_hide_details,
         vim.g.dired_show_icons
     )
-    table.insert(buffer_listing, { component = nil, line = info1 })
-    table.insert(buffer_listing, { component = nil, line = info2 })
+    table.insert(buffer_listing, {
+        component = nil,
+        line = info1,
+        highlights = vim.g.dired_show_colors and {} or nil,
+    })
+    table.insert(buffer_listing, {
+        component = nil,
+        line = info2,
+        highlights = vim.g.dired_show_colors and {} or nil,
+    })
 
     local listing = {}
     for _, comp in ipairs(formatted_components) do
@@ -144,7 +168,7 @@ function M.display_dired_listing(directory)
     local listing = M.get_directory_listing(directory)
     for _, tbl in ipairs(listing) do
         if vim.g.dired_show_colors then
-            table.insert(buffer_listings, nui_line(tbl.line))
+            table.insert(buffer_listings, tbl)
         else
             table.insert(buffer_listings, tbl.line)
         end

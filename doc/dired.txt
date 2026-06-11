@@ -33,7 +33,6 @@ higher.
 >lua
     use {
         "X3eRo0/dired.nvim",
-        requires = "MunifTanjim/nui.nvim",
         config = function()
             require("dired").setup {
                 path_separator = "/",
