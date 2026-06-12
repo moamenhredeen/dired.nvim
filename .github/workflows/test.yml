@@ -1,0 +1,27 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        neovim_version: ["stable", "nightly"]
+    name: nvim ${{ matrix.neovim_version }}
+    # nightly is informational: its breakage should not fail the workflow
+    continue-on-error: ${{ matrix.neovim_version == 'nightly' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: rhysd/action-setup-vim@v1
+        with:
+          neovim: true
+          version: ${{ matrix.neovim_version }}
+      - name: Install test dependencies
+        run: make deps
+      - name: Run tests
+        run: make test
