@@ -239,14 +239,41 @@ local function refresh_after_async(buffer, path)
     end
 end
 
+-- async operations are not atomic the way the old sync ones were: guard
+-- against a second file operation interleaving with a running one
+local operation_in_progress = false
+local function start_operation()
+    if operation_in_progress then
+        vim.notify("Dired: another file operation is in progress.", vim.log.levels.WARN)
+        return nil
+    end
+    operation_in_progress = true
+    return function()
+        operation_in_progress = false
+    end
+end
+
+-- completion callback that releases the busy guard and re-renders
+local function finish_and_refresh(release, buffer, path)
+    local refresh = refresh_after_async(buffer, path)
+    return function()
+        release()
+        refresh()
+    end
+end
+
 function M.compress_files()
     local files = get_operation_files()
     if not files then
         return
     end
+    local release = start_operation()
+    if not release then
+        return
+    end
     local buffer = vim.api.nvim_get_current_buf()
     local path = vim.g.current_dired_path
-    funcs.compress_files(files, path, refresh_after_async(buffer, path))
+    funcs.compress_files(files, path, finish_and_refresh(release, buffer, path))
 end
 
 function M.extract_files()
@@ -254,9 +281,13 @@ function M.extract_files()
     if not files then
         return
     end
+    local release = start_operation()
+    if not release then
+        return
+    end
     local buffer = vim.api.nvim_get_current_buf()
     local path = vim.g.current_dired_path
-    funcs.extract_files(files, path, refresh_after_async(buffer, path))
+    funcs.extract_files(files, path, finish_and_refresh(release, buffer, path))
 end
 
 function M.chmod_files()
@@ -316,6 +347,10 @@ function M.delete_file()
         vim.api.nvim_err_writeln("Dired: Invalid operation. Make sure cursor is placed on a file/directory.")
         return
     end
+    local release = start_operation()
+    if not release then
+        return
+    end
     for i, fs_t in ipairs(marker.marked_files) do
         if file == fs_t then
             table.remove(marker.marked_files, i)
@@ -323,8 +358,8 @@ function M.delete_file()
     end
     display.cursor_pos = vim.api.nvim_win_get_cursor(0)
     display.goto_filename = ""
-    funcs.delete_file(file, true)
-    display.render(vim.g.current_dired_path)
+    local buffer = vim.api.nvim_get_current_buf()
+    funcs.delete_file(file, true, finish_and_refresh(release, buffer, dir))
 end
 
 -- delete selected files in current dired path
@@ -347,26 +382,40 @@ function M.delete_file_range()
         ::continue::
     end
     local prompt = vim.fn.input("Confirm deletion {yes,n(o),q(uit)}: ", "")
-    if prompt == "yes" then
-        for _, filename in ipairs(files) do
-            local dir_files = ls.fs_entry.get_directory(dir)
-            local file = ls.get_file_by_filename(dir_files, filename)
-            if not file then
-                return
-            end
-            for i, fs_t in ipairs(marker.marked_files) do
-                if file.filepath == fs_t.filepath then
-                    table.remove(marker.marked_files, i)
-                end
-            end
-            display.cursor_pos = vim.api.nvim_win_get_cursor(0)
-            funcs.delete_file(file, false)
-        end
-        display.goto_filename = ""
-        display.render(vim.g.current_dired_path)
-        -- else
-        --     vim.notify(" DiredDelete: Marked files not deleted", "error")
+    if prompt ~= "yes" then
+        return
     end
+    local release = start_operation()
+    if not release then
+        return
+    end
+    display.cursor_pos = vim.api.nvim_win_get_cursor(0)
+    display.goto_filename = ""
+    local buffer = vim.api.nvim_get_current_buf()
+    local done = finish_and_refresh(release, buffer, dir)
+
+    local index = 1
+    local function delete_next()
+        local filename = files[index]
+        if not filename then
+            done()
+            return
+        end
+        index = index + 1
+        local dir_files = ls.fs_entry.get_directory(dir)
+        local file = ls.get_file_by_filename(dir_files, filename)
+        if not file then
+            done()
+            return
+        end
+        for i, fs_t in ipairs(marker.marked_files) do
+            if file.filepath == fs_t.filepath then
+                table.remove(marker.marked_files, i)
+            end
+        end
+        funcs.delete_file(file, false, delete_next)
+    end
+    delete_next()
 end
 
 -- mark single file
@@ -446,7 +495,7 @@ function M.delete_marked()
             )
             return
         end
-        if fs.get_absolute_path(fs.get_parent_path(fs_t.filepath)) ~= fs.get_absolute_path(vim.g.current_dired_path)
+        if fs.get_simplified_path(fs.get_parent_path(fs_t.filepath)) ~= fs.get_simplified_path(vim.g.current_dired_path)
         then
             files_out_of_cwd = true
             print(string.format('   {%.2d: "%s"} (file not in cwd)', i, fs_t.filename))
@@ -458,16 +507,35 @@ function M.delete_marked()
         print("[!] WARNING: You have files marked that are outside of your current working directory.")
     end
     local prompt = vim.fn.input("Confirm deletion {yes,n(o),q(uit)}: ", "")
-    if prompt == "yes" then
-        for _, fs_t in ipairs(marked_files) do
-            display.cursor_pos = vim.api.nvim_win_get_cursor(0)
-            display.goto_filename = ""
-            funcs.delete_file(fs_t, false)
-        end
-        marker.marked_files = {}
+    if prompt ~= "yes" then
+        display.goto_filename = ""
+        display.render(vim.g.current_dired_path)
+        return
     end
+    local release = start_operation()
+    if not release then
+        return
+    end
+    -- snapshot the list and clear the module state immediately so a second
+    -- trigger during the async run cannot double-delete
+    local files = marked_files
+    marker.marked_files = {}
+    display.cursor_pos = vim.api.nvim_win_get_cursor(0)
     display.goto_filename = ""
-    display.render(vim.g.current_dired_path)
+    local buffer = vim.api.nvim_get_current_buf()
+    local done = finish_and_refresh(release, buffer, vim.g.current_dired_path)
+
+    local index = 1
+    local function delete_next()
+        local fs_t = files[index]
+        if not fs_t then
+            done()
+            return
+        end
+        index = index + 1
+        funcs.delete_file(fs_t, false, delete_next)
+    end
+    delete_next()
 end
 
 function M.clip_file(action)
@@ -541,10 +609,13 @@ function M.clip_marked(action)
 end
 
 function M.paste_file()
+    local release = start_operation()
+    if not release then
+        return
+    end
     display.cursor_pos = vim.api.nvim_win_get_cursor(0)
-    clipboard.do_action()
-    display.render(vim.g.current_dired_path)
-    -- vim.notify(string.format("\"%s\" marked.", file.filename))
+    local buffer = vim.api.nvim_get_current_buf()
+    clipboard.do_action(finish_and_refresh(release, buffer, vim.g.current_dired_path))
 end
 
 -- duplicate a file
@@ -561,8 +632,12 @@ function M.duplicate_file()
         vim.api.nvim_err_writeln("Dired: Invalid operation. Make sure cursor is placed on a file/directory.")
         return
     end
-    funcs.duplicate_file(file)
-    display.render(vim.g.current_dired_path)
+    local release = start_operation()
+    if not release then
+        return
+    end
+    local buffer = vim.api.nvim_get_current_buf()
+    funcs.duplicate_file(file, finish_and_refresh(release, buffer, dir))
 end
 
 -- shell command on a file

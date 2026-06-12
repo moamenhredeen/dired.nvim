@@ -1,5 +1,8 @@
 -- functions for fetching files and directories information
 local config = require("dired.config")
+local async = require("dired.async")
+
+local uv = vim.uv or vim.loop
 
 local M = {}
 
@@ -48,10 +51,13 @@ function M.get_filename(filepath)
     return fname
 end
 
+-- canonical form for path comparisons: absolute, forward slashes, no
+-- trailing separator (on Windows fnamemodify mixes "/" and "\" depending on
+-- the input, so equality checks need this normalization)
 function M.get_simplified_path(filepath)
-    filepath = vim.fn.simplify(vim.fn.fnamemodify(filepath, ":p"))
-    if filepath:sub(-1, -1) == M.path_separator then
-        filepath = vim.fn.fnamemodify(filepath, ":h")
+    filepath = vim.fn.simplify(vim.fn.fnamemodify(filepath, ":p")):gsub("\\", "/")
+    if filepath:sub(-1, -1) == "/" then
+        filepath = vim.fn.fnamemodify(filepath, ":h"):gsub("\\", "/")
     end
 
     return filepath
@@ -101,96 +107,115 @@ function M.get_symlink(filepath)
     return link
 end
 
-function M.do_delete(path)
-    local handle = vim.loop.fs_scandir(path)
-    if type(handle) == "string" then
-        return vim.api.nvim_err_writeln(handle)
+-- recursive workers below run inside async.run: every libuv operation goes
+-- through async.await so the main loop stays free during large trees.
+
+local function delete_recursive(path)
+    local err, handle = async.await(uv.fs_scandir, path)
+    if not handle then
+        return false, err
     end
 
     while true do
-        local name, t = vim.loop.fs_scandir_next(handle)
+        local name, t = uv.fs_scandir_next(handle)
         if not name then
             break
         end
 
-        local new_cwd = M.join_paths(path, name)
+        local child = M.join_paths(path, name)
 
         if t == "directory" then
-            local success = M.do_delete(new_cwd)
+            local success, cerr = delete_recursive(child)
             if not success then
-                return false
+                return false, cerr
             end
         else
-            local success = vim.loop.fs_unlink(new_cwd)
-
-            if not success then
-                return false
+            local uerr = async.await(uv.fs_unlink, child)
+            if uerr then
+                return false, uerr
             end
         end
     end
 
-    return vim.loop.fs_rmdir(path)
+    local rerr = async.await(uv.fs_rmdir, path)
+    if rerr then
+        return false, rerr
+    end
+    return true
 end
 
-function M.do_copy(source, destination)
-    local source_stats, handle
-    local success, errmsg
-
-    source_stats, errmsg = vim.loop.fs_stat(source)
+local function copy_recursive(source, destination)
+    local serr, source_stats = async.await(uv.fs_stat, source)
     if not source_stats then
-        vim.api.nvim_err_writeln("do_copy fs_stat '%s' failed '%s'", source, errmsg)
-        return false, errmsg
+        vim.notify(string.format("do_copy fs_stat '%s' failed '%s'", source, serr), vim.log.levels.ERROR)
+        return false, serr
     end
 
     if source == destination then
-        vim.api.nvim_err_writeln("do_copy source and destination are the same, exiting early")
+        vim.notify("do_copy source and destination are the same, exiting early", vim.log.levels.WARN)
         return true
     end
 
     if source_stats.type == "file" then
-        success, errmsg = vim.loop.fs_copyfile(source, destination)
-        if not success then
-            vim.api.nvim_err_writeln("do_copy fs_copyfile failed '%s'", errmsg)
-            return false, errmsg
+        -- flags passed explicitly as 0: avoids a nil hole in await's varargs
+        local cerr = async.await(uv.fs_copyfile, source, destination, 0)
+        if cerr then
+            vim.notify(string.format("do_copy fs_copyfile failed '%s'", cerr), vim.log.levels.ERROR)
+            return false, cerr
         end
         return true
     elseif source_stats.type == "directory" then
-        handle, errmsg = vim.loop.fs_scandir(source)
-        if type(handle) == "string" then
-            return false, handle
-        elseif not handle then
-            vim.api.nvim_err_writeln("do_copy fs_scandir '%s' failed '%s'", source, errmsg)
-            return false, errmsg
+        local err, handle = async.await(uv.fs_scandir, source)
+        if not handle then
+            vim.notify(string.format("do_copy fs_scandir '%s' failed '%s'", source, err), vim.log.levels.ERROR)
+            return false, err
         end
 
-        success, errmsg = vim.loop.fs_mkdir(destination, source_stats.mode)
-        if not success then
-            M.do_delete(destination)
-            success, errmsg = vim.loop.fs_mkdir(destination, source_stats.mode)
-            -- vim.api.nvim_err_writeln(string.format("do_copy fs_mkdir '%s' failed '%s'", destination, errmsg))
-            -- return false, errmsg
+        local merr = async.await(uv.fs_mkdir, destination, source_stats.mode)
+        if merr then
+            -- destination exists: wipe it and retry, continuing into the
+            -- child loop regardless of the retry result
+            delete_recursive(destination)
+            async.await(uv.fs_mkdir, destination, source_stats.mode)
         end
 
         while true do
-            local name, _ = vim.loop.fs_scandir_next(handle)
+            local name, _ = uv.fs_scandir_next(handle)
             if not name then
                 break
             end
 
-            local new_name = M.join_paths(source, name)
-            local new_destination = M.join_paths(destination, name)
-            success, errmsg = M.do_copy(new_name, new_destination)
+            local success, cerr = copy_recursive(M.join_paths(source, name), M.join_paths(destination, name))
             if not success then
-                return false, errmsg
+                return false, cerr
             end
         end
+        return true
     else
-        errmsg = string.format("'%s' illegal file type '%s'", source, source_stats.type)
-        vim.api.nvim_err_writeln("do_copy %s", errmsg)
+        local errmsg = string.format("'%s' illegal file type '%s'", source, source_stats.type)
+        vim.notify("do_copy " .. errmsg, vim.log.levels.ERROR)
         return false, errmsg
     end
+end
 
-    return true
+-- delete path recursively without blocking the UI; callback(success, errmsg)
+function M.do_delete(path, callback)
+    async.run(function()
+        return delete_recursive(path)
+    end, function(success, errmsg)
+        if not success and errmsg then
+            vim.notify(string.format("Dired: delete '%s' failed: %s", path, errmsg), vim.log.levels.ERROR)
+        end
+        callback(success, errmsg)
+    end)
+end
+
+-- copy source to destination recursively without blocking the UI;
+-- callback(success, errmsg)
+function M.do_copy(source, destination, callback)
+    async.run(function()
+        return copy_recursive(source, destination)
+    end, callback)
 end
 
 return M

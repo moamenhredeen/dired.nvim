@@ -7,14 +7,14 @@ local M = {}
 M.path_separator = config.get("path_separator")
 
 local archive_formats = {
-    [".zip"] = { executable = "zip", create = { "zip", "-r" }, extract = "zip" },
-    [".tar"] = { executable = "tar", create = { "tar", "-cf" }, extract = "tar" },
-    [".tar.gz"] = { executable = "tar", create = { "tar", "-czf" }, extract = "tar" },
-    [".tgz"] = { executable = "tar", create = { "tar", "-czf" }, extract = "tar" },
-    [".tar.bz2"] = { executable = "tar", create = { "tar", "-cjf" }, extract = "tar" },
-    [".tbz2"] = { executable = "tar", create = { "tar", "-cjf" }, extract = "tar" },
-    [".tar.xz"] = { executable = "tar", create = { "tar", "-cJf" }, extract = "tar" },
-    [".txz"] = { executable = "tar", create = { "tar", "-cJf" }, extract = "tar" },
+    [".zip"] = { kind = "zip" },
+    [".tar"] = { kind = "tar", create_flag = "-cf" },
+    [".tar.gz"] = { kind = "tar", create_flag = "-czf" },
+    [".tgz"] = { kind = "tar", create_flag = "-czf" },
+    [".tar.bz2"] = { kind = "tar", create_flag = "-cjf" },
+    [".tbz2"] = { kind = "tar", create_flag = "-cjf" },
+    [".tar.xz"] = { kind = "tar", create_flag = "-cJf" },
+    [".txz"] = { kind = "tar", create_flag = "-cJf" },
 }
 
 local archive_extensions = { ".tar.bz2", ".tar.gz", ".tar.xz", ".tbz2", ".tgz", ".txz", ".tar", ".zip" }
@@ -28,12 +28,71 @@ local function get_archive_format(path)
     end
 end
 
-local function executable_exists(executable)
-    if vim.fn.executable(executable) == 1 then
+local function is_absolute_path(path)
+    local first = path:sub(1, 1)
+    if first == "/" or first == "\\" then
         return true
     end
-    vim.notify(string.format("Dired: `%s` is required for this operation.", executable), vim.log.levels.ERROR)
+    return path:match("^%a:[/\\]") ~= nil
+end
+
+-- bsdtar (Windows 10+, macOS) reads and writes zip archives; GNU tar (most
+-- Linux distros) does not, so zip support there needs the zip/unzip tools.
+local tar_is_bsd
+local function has_bsdtar()
+    if tar_is_bsd == nil then
+        if vim.fn.executable("tar") == 1 then
+            tar_is_bsd = vim.fn.system({ "tar", "--version" }):lower():find("bsdtar", 1, true) ~= nil
+        else
+            tar_is_bsd = false
+        end
+    end
+    return tar_is_bsd
+end
+
+local function tar_exists()
+    if vim.fn.executable("tar") == 1 then
+        return true
+    end
+    vim.notify("Dired: `tar` is required for this operation.", vim.log.levels.ERROR)
     return false
+end
+
+-- returns the create command with the archive path appended, or nil
+local function get_create_command(format, archive_path)
+    if format.kind == "zip" then
+        if vim.fn.executable("zip") == 1 then
+            return { "zip", "-r", archive_path }
+        end
+        if has_bsdtar() then
+            return { "tar", "-a", "-cf", archive_path }
+        end
+        vim.notify("Dired: `zip` or bsdtar is required to create zip archives.", vim.log.levels.ERROR)
+        return nil
+    end
+    if not tar_exists() then
+        return nil
+    end
+    return { "tar", format.create_flag, archive_path }
+end
+
+-- returns the full extract command, or nil
+local function get_extract_command(format, archive_path, destination)
+    if format.kind == "zip" then
+        if vim.fn.executable("unzip") == 1 then
+            return { "unzip", "-n", archive_path, "-d", destination }
+        end
+        if has_bsdtar() then
+            -- -k skips existing files, matching unzip -n
+            return { "tar", "-xkf", archive_path, "-C", destination }
+        end
+        vim.notify("Dired: `unzip` or bsdtar is required to extract zip archives.", vim.log.levels.ERROR)
+        return nil
+    end
+    if not tar_exists() then
+        return nil
+    end
+    return { "tar", "-xf", archive_path, "-C", destination }
 end
 
 local function run_process(args, cwd, callback)
@@ -51,9 +110,11 @@ local function run_process(args, cwd, callback)
 end
 
 function M.compress_files(files, directory, callback)
+    callback = callback or function() end
     for _, file in ipairs(files) do
         if fs.get_simplified_path(file.parent_dir) ~= fs.get_simplified_path(directory) then
             vim.notify("Dired: Compression only supports files in the current directory.", vim.log.levels.ERROR)
+            callback(false)
             return
         end
     end
@@ -61,26 +122,26 @@ function M.compress_files(files, directory, callback)
     local default_name = #files == 1 and (files[1].filename .. ".zip") or "archive.zip"
     local archive_name = vim.fn.input("Archive name: ", default_name, "file")
     if archive_name == "" then
+        callback(false)
         return
     end
 
     local archive_path = archive_name
-    if not archive_name:match("^/") then
+    if not is_absolute_path(archive_name) then
         archive_path = fs.join_paths(directory, archive_name)
     end
     archive_path = vim.fn.fnamemodify(archive_path, ":p")
     local format, extension = get_archive_format(archive_path)
     if not format then
         vim.notify("Dired: Unsupported archive extension.", vim.log.levels.ERROR)
-        return
-    end
-    if not executable_exists(format.executable) then
+        callback(false)
         return
     end
     local archive_exists = fs.file_exists(archive_path)
     if archive_exists then
         local choice = vim.fn.confirm("Archive already exists. Replace it?", "&Yes\n&No", 2)
         if choice ~= 1 then
+            callback(false)
             return
         end
     end
@@ -89,8 +150,11 @@ function M.compress_files(files, directory, callback)
     if fs.file_exists(temporary_path) then
         vim.loop.fs_unlink(temporary_path)
     end
-    local args = vim.deepcopy(format.create)
-    table.insert(args, temporary_path)
+    local args = get_create_command(format, temporary_path)
+    if not args then
+        callback(false)
+        return
+    end
     table.insert(args, "--")
     for _, file in ipairs(files) do
         table.insert(args, file.filename)
@@ -139,16 +203,19 @@ function M.compress_files(files, directory, callback)
 end
 
 function M.extract_files(files, directory, callback)
+    callback = callback or function() end
     local destination = vim.fn.input("Extract to: ", directory, "dir")
     if destination == "" then
+        callback(false)
         return
     end
-    if not destination:match("^/") then
+    if not is_absolute_path(destination) then
         destination = fs.join_paths(directory, destination)
     end
     destination = vim.fn.fnamemodify(destination, ":p")
     if vim.fn.isdirectory(destination) == 0 and vim.fn.mkdir(destination, "p") == 0 then
         vim.notify("Dired: Could not create extraction directory.", vim.log.levels.ERROR)
+        callback(false)
         return
     end
 
@@ -167,19 +234,10 @@ function M.extract_files(files, directory, callback)
             callback(false)
             return
         end
-        local args
-        if format.extract == "zip" then
-            args = { "unzip", "-n", file.filepath, "-d", destination }
-            if not executable_exists("unzip") then
-                callback(false)
-                return
-            end
-        else
-            if not executable_exists("tar") then
-                callback(false)
-                return
-            end
-            args = { "tar", "-xf", file.filepath, "-C", destination }
+        local args = get_extract_command(format, file.filepath, destination)
+        if not args then
+            callback(false)
+            return
         end
 
         run_process(args, directory, function(success)
@@ -309,17 +367,31 @@ function M.create_file()
     display.goto_filename = filename
 end
 
-function M.delete_file(fs_t, ask)
+-- delete fs_t asynchronously; callback(success, errmsg) is always invoked,
+-- synchronously on refusal/cancel paths
+function M.delete_file(fs_t, ask, callback)
+    callback = callback or function() end
     if fs_t.filename == "." or fs_t.filename == ".." then
         vim.notify(string.format(' Cannot Delete "%s"', fs_t.filepath), "error")
+        callback(false, "refused")
         return
     end
-    if ask ~= true then
+
+    local uv = vim.uv or vim.loop
+    local function start()
         if fs_t.filetype == "directory" then
-            fs.do_delete(fs_t.filepath)
+            fs.do_delete(fs_t.filepath, callback)
         else
-            vim.loop.fs_unlink(fs_t.filepath)
+            uv.fs_unlink(fs_t.filepath, function(err)
+                vim.schedule(function()
+                    callback(err == nil, err)
+                end)
+            end)
         end
+    end
+
+    if ask ~= true then
+        start()
         return
     end
     local prompt = vim.fn.input(
@@ -327,11 +399,9 @@ function M.delete_file(fs_t, ask)
         ""
     )
     if prompt == "yes" then
-        if fs_t.filetype == "directory" then
-            fs.do_delete(fs_t.filepath)
-        else
-            vim.loop.fs_unlink(fs_t.filepath)
-        end
+        start()
+    else
+        callback(false, "cancelled")
     end
 end
 
@@ -363,9 +433,13 @@ function M.shell_cmd_on_marked_files(fs_t_list)
     run_in_compile_mode(xcmd, vim.g.current_dired_path)
 end
 
-function M.duplicate_file(fs_t)
+-- duplicate fs_t asynchronously; callback(success, errmsg) is always invoked,
+-- synchronously on refusal/cancel paths
+function M.duplicate_file(fs_t, callback)
+    callback = callback or function() end
     if fs_t.filename == "." or fs_t.filename == ".." then
         vim.notify(' Cannot duplicate "." or ".."', "error")
+        callback(false, "refused")
         return
     end
 
@@ -375,6 +449,7 @@ function M.duplicate_file(fs_t)
     })
 
     if new_name == "" or new_name == fs_t.filename then
+        callback(false, "cancelled")
         return
     end
 
@@ -387,23 +462,27 @@ function M.duplicate_file(fs_t)
             string.format(' DiredDuplicate: File "%s" already exists.', new_name),
             "error"
         )
+        callback(false, "exists")
         return
     end
 
-    local success, errmsg = fs.do_copy(source_path, destination_path)
-    if not success then
+    fs.do_copy(source_path, destination_path, function(success, errmsg)
+        if not success then
+            vim.notify(
+                string.format(' DiredDuplicate: Could not duplicate "%s" to "%s". %s',
+                    fs_t.filename, new_name, errmsg or ""),
+                "error"
+            )
+            callback(false, errmsg)
+            return
+        end
+
+        display.goto_filename = new_name
         vim.notify(
-            string.format(' DiredDuplicate: Could not duplicate "%s" to "%s". %s',
-                fs_t.filename, new_name, errmsg or ""),
-            "error"
+            string.format(' DiredDuplicate: "%s" duplicated as "%s"', fs_t.filename, new_name)
         )
-        return
-    end
-
-    display.goto_filename = new_name
-    vim.notify(
-        string.format(' DiredDuplicate: "%s" duplicated as "%s"', fs_t.filename, new_name)
-    )
+        callback(true)
+    end)
 end
 
 return M
