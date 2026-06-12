@@ -1,5 +1,7 @@
 # dired.nvim
 
+[![test](https://github.com/moamenhredeen/dired.nvim/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/moamenhredeen/dired.nvim/actions/workflows/test.yml)
+
 A file browser inspired from Emacs Dired for neovim.
 
 ## Screenshots
@@ -10,19 +12,17 @@ Different types of files in dired.nvim
 ![Screenshot from 2023-02-02 20-16-20](https://user-images.githubusercontent.com/24680989/216356401-ae181f74-2aee-434d-9ef6-abdb23ec29e2.png)
 ![Screenshot from 2023-02-02 20-15-57](https://user-images.githubusercontent.com/24680989/216356422-43a7f103-e82a-4d29-bf90-3278f61866f4.png)
 
-
-
 ## Installation
 
 Requires [Neovim 0.10](https://github.com/neovim/neovim/releases/tag/v0.10.0) or
 higher.
 
 > [lazy.nvim](https://github.com/folke/lazy.nvim)
+
 ```lua
 {
     "X3eRo0/dired.nvim",
     dependencies = {
-        "nvim-lua/plenary.nvim",
         { "ej-shafran/compile-mode.nvim", version = "^5.0.0" },
     },
     config = function()
@@ -39,7 +39,9 @@ higher.
 ```
 
 ### Setup
+
 You can require this plugin and use it like this.
+
 ```lua
 -- Neovim configuration for the 'dired' plugin
 
@@ -83,73 +85,87 @@ Directory navigation reuses the current Dired buffer. Opening a file hides
 that buffer, so `<C-^>` returns to the same Dired session and directory. Use
 `DiredQuit` to delete the session buffer.
 
+File operations (copy, move, delete, duplicate, compress, extract) run
+asynchronously, so the editor stays responsive even for large directory
+trees. Only one file operation runs at a time; starting another while one is
+in progress shows a warning instead.
+
 # Commands
 
 You can use the following commands to add in your custom keybinds.
 
-| Command              | Description                                            |
-|----------------------|--------------------------------------------------------|
-| Dired                | Open Dired UI (dir completion)                          |
-| DiredRename          | Rename file/directory under cursor (file completion)   |
-| DiredDelete          | Delete file/directory under cursor (file completion)   |
-| DiredMark            | Mark file/directory under cursor (file completion)     |
-| DiredDeleteRange     | Delete selected files/directories (visual)             |
-| DiredDeleteMarked    | Delete marked files/directories                         |
-| DiredMarkRange       | Mark a range of files/directories (visual)             |
-| DiredGoBack          | Navigate back in the directory history                 |
-| DiredGoUp            | Move up to the parent directory                        |
-| DiredCopy            | Copy the file/directory under the cursor               |
-| DiredCopyRange       | Copy selected files/directories (visual)              |
-| DiredCopyMarked      | Copy marked files/directories                          |
-| DiredMove            | Move the file/directory under the cursor               |
-| DiredMoveRange       | Move selected files/directories (visual)              |
-| DiredMoveMarked      | Move marked files/directories                          |
-| DiredPaste           | Paste copied or moved files in the current directory   |
-| DiredEnter           | Open the file or directory at the cursor               |
-| DiredCreate          | Create a new directory                                 |
-| DiredCompress        | Compress the file under cursor or marked files         |
-| DiredExtract         | Extract the archive under cursor or marked archives    |
-| DiredChmod           | Change mode of the file under cursor or marked files   |
-| DiredTouch           | Update timestamps of the file under cursor or marked files |
-| DiredShellCmd        | Apply any shell command to file/directory under cursor (shell cmd completion)|
-| DiredShellCmdMarked  | Apply any shell command to marked files/directories|
-| DiredToggleHidden    | Toggle the visibility of hidden files                  |
-| DiredToggleSortOrder  | Toggle the sorting order of files and directories      |
-| DiredToggleColors    | Toggle the display of colors                            |
-| DiredToggleIcons     | Toggle the display of filetype icons                    |
-| DiredToggleHideDetails| Toggle hiding/showing file details                      |
-| DiredQuit            | Quit the 'dired' interface                              |
+| Command                | Description                                                                   |
+| ---------------------- | ----------------------------------------------------------------------------- |
+| Dired                  | Open Dired UI (dir completion)                                                |
+| DiredRename            | Rename file/directory under cursor (file completion)                          |
+| DiredDelete            | Delete file/directory under cursor (file completion)                          |
+| DiredMark              | Mark file/directory under cursor (file completion)                            |
+| DiredUnmark            | Unmark file/directory under cursor                                            |
+| DiredDeleteRange       | Delete selected files/directories (visual)                                    |
+| DiredDeleteMarked      | Delete marked files/directories                                               |
+| DiredMarkRange         | Mark a range of files/directories (visual)                                    |
+| DiredUnmarkRange       | Unmark a range of files/directories (visual)                                  |
+| DiredUnmarkAll         | Unmark all marked files/directories                                           |
+| DiredGoBack            | Navigate back in the directory history                                        |
+| DiredGoUp              | Move up to the parent directory                                               |
+| DiredCopy              | Copy the file/directory under the cursor                                      |
+| DiredCopyRange         | Copy selected files/directories (visual)                                      |
+| DiredCopyMarked        | Copy marked files/directories                                                 |
+| DiredMove              | Move the file/directory under the cursor                                      |
+| DiredMoveRange         | Move selected files/directories (visual)                                      |
+| DiredMoveMarked        | Move marked files/directories                                                 |
+| DiredPaste             | Paste copied or moved files in the current directory                          |
+| DiredEnter             | Open the file or directory at the cursor                                      |
+| DiredCreate            | Create a new file, or a directory when the name ends with the path separator  |
+| DiredDuplicate         | Duplicate the file/directory under the cursor                                 |
+| DiredCompress          | Compress the file under cursor or marked files                                |
+| DiredExtract           | Extract the archive under cursor or marked archives                           |
+| DiredChmod             | Change mode of the file under cursor or marked files                          |
+| DiredTouch             | Update timestamps of the file under cursor or marked files                    |
+| DiredShellCmd          | Apply any shell command to file/directory under cursor (shell cmd completion) |
+| DiredShellCmdMarked    | Apply any shell command to marked files/directories                           |
+| DiredToggleHidden      | Toggle the visibility of hidden files                                         |
+| DiredToggleSortOrder   | Toggle the sorting order of files and directories                             |
+| DiredToggleColors      | Toggle the display of colors                                                  |
+| DiredToggleIcons       | Toggle the display of filetype icons                                          |
+| DiredToggleHideDetails | Toggle hiding/showing file details                                            |
+| DiredQuit              | Quit the 'dired' interface                                                    |
 
 # Keybinding
 
 Inside a directory buffer, there are the following keybindings:
-| Keybinding        | Description                                       |
-|-------------------|---------------------------------------------------|
-| **`<CR>`**| Open the file or directory at the cursor.         |
-| **`d`**| Create new directories and files.                 |
-| **`M`**| Mark directories and files (both in normal and visual mode). |
-| **`C`**| Copy files.                                       |
-| **`X`**| Move files.                                       |
-| **`P`**| Paste files in the current directory.             |
-| **`D`**| Delete directories and files (both in normal and visual mode). |
-| **`R`**| Rename directories and files.                     |
-| **`Z`**| Compress the current or marked files.             |
-| **`E`**| Extract the current or marked archives.           |
-| **`MD`**| Delete marked files.                              |
-| **`MC`**| Copy marked files.                                |
-| **`MX`**| Move marked files.                                |
-| **`_`**| Go to the parent directory.                        |
-| **`-`**| Go back to previous directory.                       |
-| **`!`**| Apply any command to directories/files under cursor. |
-| **`&`**| Apply any command to marked directories and files. |
-| **`.`**| Toggle show_hidden.                               |
-| **`,`**| Change sort_order.                                |
-| **`c`**| Toggle colors.                                    |
-| **`*`**| Toggle filetype icons.                            |
-| **`(`**| Toggle hiding/showing file details.               |
-| **`q`**| Quit the 'dired' interface.                       |
+
+| Keybinding | Description                                                    |
+| ---------- | -------------------------------------------------------------- |
+| **`<CR>`** | Open the file or directory at the cursor.                      |
+| **`d`**    | Create new directories and files.                              |
+| **`M`**    | Mark directories and files (both in normal and visual mode).   |
+| **`C`**    | Copy files.                                                    |
+| **`X`**    | Move files.                                                    |
+| **`P`**    | Paste files in the current directory.                          |
+| **`D`**    | Delete directories and files (both in normal and visual mode). |
+| **`R`**    | Rename directories and files.                                  |
+| **`Y`**    | Duplicate the file or directory under the cursor.              |
+| **`u`**    | Unmark files (both in normal and visual mode).                 |
+| **`U`**    | Unmark all marked files.                                       |
+| **`Z`**    | Compress the current or marked files.                          |
+| **`E`**    | Extract the current or marked archives.                        |
+| **`MD`**   | Delete marked files.                                           |
+| **`MC`**   | Copy marked files.                                             |
+| **`MX`**   | Move marked files.                                             |
+| **`_`**    | Go to the parent directory.                                    |
+| **`-`**    | Go back to previous directory.                                 |
+| **`!`**    | Apply any command to directories/files under cursor.           |
+| **`&`**    | Apply any command to marked directories and files.             |
+| **`.`**    | Toggle show_hidden.                                            |
+| **`,`**    | Change sort_order.                                             |
+| **`c`**    | Toggle colors.                                                 |
+| **`*`**    | Toggle filetype icons.                                         |
+| **`(`**    | Toggle hiding/showing file details.                            |
+| **`q`**    | Quit the 'dired' interface.                                    |
 
 The default keybinds are given below.
+
 ```lua
 {
     dired_enter = "<CR>",
@@ -159,6 +175,7 @@ The default keybinds are given below.
     dired_create = "d",
     dired_delete = "D",
     dired_delete_range = "D",
+    dired_duplicate = "Y",
     dired_compress = "Z",
     dired_extract = "E",
     dired_copy = "C",
@@ -170,6 +187,9 @@ The default keybinds are given below.
     dired_paste = "P",
     dired_mark = "M",
     dired_mark_range = "M",
+    dired_unmark = "u",
+    dired_unmark_range = "u",
+    dired_unmark_all = "U",
     dired_delete_marked = "MD",
     dired_shell_cmd = "!",
     dired_shell_cmd_marked = "&",
@@ -185,11 +205,12 @@ The default keybinds are given below.
 `DiredCompress` supports `.zip`, `.tar`, `.tar.gz`, `.tgz`, `.tar.bz2`,
 `.tbz2`, `.tar.xz`, and `.txz`. `DiredChmod` and `DiredTouch` have no default
 keybindings, but can be configured with `dired_chmod` and `dired_touch`. ZIP
-operations require `zip` and `unzip`; TAR formats require `tar`.
+operations use `zip`/`unzip` when available and fall back to bsdtar
+(preinstalled on Windows 10+ and macOS); TAR formats require `tar`.
 
 # Colors
 
-You can change the colors of each component in the output by specifiying 
+You can change the colors of each component in the output by specifiying
 a table of options for each Hightlight group used in Dired.
 
 ```lua
@@ -202,14 +223,16 @@ local DiredDimText = {
 ```
 
 The options are explained below.
-| Option | Descript |
-|--------|----------|
-| link | A list of highlight groups to link to, in order of priority. The first one that exists will be used. |
-| bg | The background color to use, in hex, if the highlight group is not defined and it is not linked to another group.|
-| fg | The foreground color to use, in hex, if the highlight group is not defined and it is not linked to another group.|
-| gui | The gui to use, if the highlight group is not defined and it is not linked to another group. |
 
-The gui arg is described in syntax.txt and valid arguments are defined in attr-list ``:h attr-list``
+| Option | Descript                                                                                                          |
+| ------ | ----------------------------------------------------------------------------------------------------------------- |
+| link   | A list of highlight groups to link to, in order of priority. The first one that exists will be used.              |
+| bg     | The background color to use, in hex, if the highlight group is not defined and it is not linked to another group. |
+| fg     | The foreground color to use, in hex, if the highlight group is not defined and it is not linked to another group. |
+| gui    | The gui to use, if the highlight group is not defined and it is not linked to another group.                      |
+
+The gui arg is described in syntax.txt and valid arguments are defined in attr-list `:h attr-list`
+
 ```
 gui={attr-list}
 	These give the attributes to use in the GUI mode.
@@ -217,31 +240,30 @@ gui={attr-list}
 	Note that "bold" can be used here and by using a bold font.  They
 	have the same effect.
 	Note that the attributes are ignored for the "Normal" group.
-
 ```
 
 attr-list is a comma-separated list (without spaces) of the
 following items (in any order):
 
-
-| Option | Description |
-|--------|-------------|
-|bold||
-|underline||
-|undercurl|curly underline
-|underdouble|double underline|
-|underdotted|dotted underline|
-|underdashed|dashed underline|
-|strikethrough||
-|reverse||
-|inverse|same as reverse|
-|italic||
-|standout||
-|altfont||
-|nocombine|override attributes instead of combining them|
-|NONE|no attributes used (used to reset it)|
+| Option        | Description                                   |
+| ------------- | --------------------------------------------- |
+| bold          |                                               |
+| underline     |                                               |
+| undercurl     | curly underline                               |
+| underdouble   | double underline                              |
+| underdotted   | dotted underline                              |
+| underdashed   | dashed underline                              |
+| strikethrough |                                               |
+| reverse       |                                               |
+| inverse       | same as reverse                               |
+| italic        |                                               |
+| standout      |                                               |
+| altfont       |                                               |
+| nocombine     | override attributes instead of combining them |
+| NONE          | no attributes used (used to reset it)         |
 
 The default color configuration is given below
+
 ```lua
 {
     DiredDimText = { link = {}, bg = "NONE", fg = "505050", gui = "NONE" },
@@ -268,6 +290,21 @@ The default color configuration is given below
 }
 ```
 
-## TODO
+## Running Tests
 
-1. Allow changing file permissions.
+Tests use [mini.test](https://github.com/echasnovski/mini.nvim). With `make`:
+
+```sh
+make deps   # clone mini.nvim into deps/ (one time)
+make test   # run the whole suite
+make test_file FILE=tests/test_fs.lua
+```
+
+Without `make` (e.g. Windows PowerShell):
+
+```powershell
+git clone --filter=blob:none https://github.com/echasnovski/mini.nvim deps/mini.nvim
+nvim --headless --noplugin -u scripts/minimal_init.lua -c "lua MiniTest.run()"
+# single file:
+nvim --headless --noplugin -u scripts/minimal_init.lua -c "lua MiniTest.run_file('tests/test_fs.lua')"
+```
