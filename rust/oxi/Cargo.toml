@@ -11,5 +11,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 dired-engine = { path = "../engine" }
-# git: crates.io 0.6.0 predates the neovim-0-12 feature
-nvim-oxi = { git = "https://github.com/noib3/nvim-oxi", features = ["neovim-0-12", "libuv"] }
+# git: crates.io 0.6.0 predates the neovim-0-11/0-12 features. Build against the
+# lowest API level we support (0.11) so one binary loads on 0.11 and 0.12 alike;
+# a 0-12 build would fail to load on 0.11.
+nvim-oxi = { git = "https://github.com/noib3/nvim-oxi", features = ["neovim-0-11", "libuv"] }

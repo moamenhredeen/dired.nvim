@@ -2,3 +2,4 @@
 deps/
 rust/target/
 lua/dired_core.so
+lua/dired_core.dll

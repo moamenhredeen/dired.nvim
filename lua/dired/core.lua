@@ -3,7 +3,8 @@
 local ok, lib = pcall(require, "dired_core")
 if not ok then
     error(
-        "dired.nvim: native core not found. Build it with `make core` in the plugin directory.\n"
+        "dired.nvim: native core not found. Install it with "
+            .. "`:lua require('dired.install').install()` or `make core`.\n"
             .. tostring(lib)
     )
 end

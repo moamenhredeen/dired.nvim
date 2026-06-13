@@ -14,17 +14,21 @@ Different types of files in dired.nvim
 
 ## Installation
 
-Requires [Neovim 0.10](https://github.com/neovim/neovim/releases/tag/v0.10.0) or
-higher and a [Rust toolchain](https://rustup.rs) (`cargo`) to build the native
-core. Prebuilt binaries are planned; until then the `build` step below compiles
-it locally.
+Requires [Neovim 0.11](https://github.com/neovim/neovim/releases/tag/v0.11.0) or
+higher. The plugin ships a native core; the `build` step below downloads a
+prebuilt binary for your platform and falls back to compiling it with a
+[Rust toolchain](https://rustup.rs) (`cargo`) if no prebuilt binary is
+available.
 
 > [lazy.nvim](https://github.com/folke/lazy.nvim)
 
 ```lua
 {
     "X3eRo0/dired.nvim",
-    build = "make core",
+    build = function(plugin)
+        vim.opt.runtimepath:append(plugin.dir)
+        require("dired.install").install(plugin.dir)
+    end,
     dependencies = {
         { "ej-shafran/compile-mode.nvim", version = "^5.0.0" },
     },

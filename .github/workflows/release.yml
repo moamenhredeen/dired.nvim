@@ -1,0 +1,51 @@
+name: release
+
+# Build the native core for every supported platform and attach the binaries
+# to the GitHub release for the pushed tag. Native runners are used per target
+# so the C-based crates (bzip2, xz2) need no cross-compilation.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.asset }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            lib: libdired_core.so
+            asset: dired_core-x86_64-unknown-linux-gnu.so
+          - runner: ubuntu-22.04-arm
+            lib: libdired_core.so
+            asset: dired_core-aarch64-unknown-linux-gnu.so
+          - runner: macos-13
+            lib: libdired_core.dylib
+            asset: dired_core-x86_64-apple-darwin.so
+          - runner: macos-14
+            lib: libdired_core.dylib
+            asset: dired_core-aarch64-apple-darwin.so
+          - runner: windows-latest
+            lib: dired_core.dll
+            asset: dired_core-x86_64-pc-windows-msvc.dll
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - name: Build
+        shell: bash
+        run: cargo build --release --manifest-path rust/Cargo.toml -p dired-core
+      - name: Rename artifact
+        shell: bash
+        run: cp "rust/target/release/${{ matrix.lib }}" "${{ matrix.asset }}"
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ matrix.asset }}
