@@ -1,0 +1,18 @@
+# Pure logic: no nvim dependency, so everything here runs under `cargo test`.
+[package]
+name = "dired-engine"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+tar = "0.4"
+flate2 = "1"
+bzip2 = "0.5"
+xz2 = { version = "0.1", features = ["static"] }
+zip = { version = "2", default-features = false, features = ["deflate"] }
+
+[target.'cfg(unix)'.dependencies]
+uzers = "0.12"
+
+[dev-dependencies]
+tempfile = "3"

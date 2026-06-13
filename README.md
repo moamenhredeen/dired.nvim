@@ -15,13 +15,16 @@ Different types of files in dired.nvim
 ## Installation
 
 Requires [Neovim 0.10](https://github.com/neovim/neovim/releases/tag/v0.10.0) or
-higher.
+higher and a [Rust toolchain](https://rustup.rs) (`cargo`) to build the native
+core. Prebuilt binaries are planned; until then the `build` step below compiles
+it locally.
 
 > [lazy.nvim](https://github.com/folke/lazy.nvim)
 
 ```lua
 {
     "X3eRo0/dired.nvim",
+    build = "make core",
     dependencies = {
         { "ej-shafran/compile-mode.nvim", version = "^5.0.0" },
     },
@@ -204,9 +207,9 @@ The default keybinds are given below.
 
 `DiredCompress` supports `.zip`, `.tar`, `.tar.gz`, `.tgz`, `.tar.bz2`,
 `.tbz2`, `.tar.xz`, and `.txz`. `DiredChmod` and `DiredTouch` have no default
-keybindings, but can be configured with `dired_chmod` and `dired_touch`. ZIP
-operations use `zip`/`unzip` when available and fall back to bsdtar
-(preinstalled on Windows 10+ and macOS); TAR formats require `tar`.
+keybindings, but can be configured with `dired_chmod` and `dired_touch`.
+Archive support is built into the plugin's native core — no external
+`tar`/`zip`/`unzip` tools are needed.
 
 # Colors
 

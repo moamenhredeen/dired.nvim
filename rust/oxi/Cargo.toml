@@ -1,0 +1,15 @@
+# nvim-facing glue only; all logic lives in dired-engine so it stays testable
+# with plain `cargo test` (this crate's symbols only resolve inside nvim).
+[package]
+name = "dired-core"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+name = "dired_core"
+crate-type = ["cdylib"]
+
+[dependencies]
+dired-engine = { path = "../engine" }
+# git: crates.io 0.6.0 predates the neovim-0-12 feature
+nvim-oxi = { git = "https://github.com/noib3/nvim-oxi", features = ["neovim-0-12", "libuv"] }

@@ -21,6 +21,10 @@ jobs:
         with:
           neovim: true
           version: ${{ matrix.neovim_version }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
       - name: Install test dependencies
         run: make deps
       - name: Run tests

@@ -1,2 +1,4 @@
 .luarc.json
 deps/
+rust/target/
+lua/dired_core.so

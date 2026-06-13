@@ -1,4 +1,6 @@
 -- util functions
+local core = require("dired.core")
+
 local M = {}
 
 M.uid_cache = {}
@@ -75,63 +77,17 @@ function M.find(table, elem)
 end
 
 function M.getpwid(uid)
-    -- using GNU id to get username/group because libuv
-    -- does not have a function to return password
-    -- database by user id. Only os_get_passwd() is
-    -- available.
-
-    if vim.loop.os_uname().sysname == "Windows_NT" then
-        return vim.loop.os_getenv("USERNAME")
+    if M.uid_cache[uid] == nil then
+        M.uid_cache[uid] = core.user_name(uid) or "<NULL>"
     end
-
-    if M.uid_cache[uid] ~= nil then
-        return M.uid_cache[uid]
-    end
-
-    local username = vim.fn.system(string.format("id -nu %d", uid))
-    if not username then
-        return nil
-    end
-    username = username:gsub("[\n\r]", "")
-    if string.find(username, "no such user") then
-        username = "<NULL>"
-    end
-    M.uid_cache[uid] = username
-    return username
+    return M.uid_cache[uid]
 end
 
 function M.getgroupname(gid)
-    -- using getent to get groupname.
-
-    local sysname = vim.loop.os_uname().sysname
-    if sysname == "Windows_NT" then
-        return vim.loop.os_gethostname()
+    if M.gid_cache[gid] == nil then
+        M.gid_cache[gid] = core.group_name(gid) or "???"
     end
-
-    if M.gid_cache[gid] ~= nil then
-        return M.gid_cache[gid]
-    end
-
-    local groupname = "<NULL>"
-
-    if sysname == "Darwin" then
-        groupname = vim.fn.system(string.format("dscl . -list /Groups PrimaryGroupID | awk '$2 == %d {print $1}'", gid))
-    else
-        groupname =
-            vim.fn.system(string.format("cat /etc/group | grep :%d:| head -n 1 | awk -F ':' '{ print $1}'", gid))
-    end
-
-    if not groupname then
-        return "???"
-    end
-
-    groupname = groupname:gsub("[\n\r]", "")
-    if string.find(groupname, "no such user") then
-        groupname = "???"
-    end
-
-    M.gid_cache[gid] = groupname
-    return groupname
+    return M.gid_cache[gid]
 end
 
 function M.get_short_size(size)
