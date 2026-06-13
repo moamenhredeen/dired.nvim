@@ -4,6 +4,10 @@
 //! Subcommands:
 //!   archive-create <archive> <cwd> <file>...   create archive of files under cwd
 //!   archive-extract <archive> <dest>           extract archive into dest
+//!   tar-list <archive>                         list tar entry names (one/line)
+//!   tar-read <archive> <member>                stream one entry to stdout
+//!   tar-update <archive> <member> <src>        add/replace entry from src file
+//!   tar-delete <archive> <member>              remove one entry
 //!
 //! It also acts as a drop-in `unzip`/`zip` shim for Vim's built-in zip.vim
 //! plugin (point g:zip_unzipcmd / g:zip_zipcmd / g:zip_extractcmd at this
@@ -30,6 +34,10 @@ fn main() -> ExitCode {
     let result = match args.first().map(String::as_str) {
         Some("archive-create") => archive_create(&args[1..]),
         Some("archive-extract") => archive_extract(&args[1..]),
+        Some("tar-list") => tar_list(&args[1..]),
+        Some("tar-read") => tar_read(&args[1..]),
+        Some("tar-update") => tar_update(&args[1..]),
+        Some("tar-delete") => tar_delete(&args[1..]),
         // zip.vim invokes us as bare unzip/zip; those calls lead with a flag
         Some(first) if first.starts_with('-') => zip_shim(&args),
         Some(other) => Err(format!("unknown subcommand: {}", other)),
@@ -73,6 +81,42 @@ fn split_flag(args: &[String]) -> (Option<&str>, Vec<&str>) {
         }
     }
     (flag, positional)
+}
+
+fn tar_list(args: &[String]) -> Result<(), String> {
+    let [archive] = args else {
+        return Err("usage: tar-list <archive>".to_string());
+    };
+    let names = archive::tar_list(archive)?;
+    let stdout = io::stdout();
+    let mut out = stdout.lock();
+    for name in names {
+        writeln!(out, "{}", name).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+fn tar_read(args: &[String]) -> Result<(), String> {
+    let [archive, member] = args else {
+        return Err("usage: tar-read <archive> <member>".to_string());
+    };
+    let stdout = io::stdout();
+    let mut out = stdout.lock();
+    archive::tar_read(archive, member, &mut out)
+}
+
+fn tar_update(args: &[String]) -> Result<(), String> {
+    let [archive, member, src] = args else {
+        return Err("usage: tar-update <archive> <member> <src>".to_string());
+    };
+    archive::tar_update(archive, member, src)
+}
+
+fn tar_delete(args: &[String]) -> Result<(), String> {
+    let [archive, member] = args else {
+        return Err("usage: tar-delete <archive> <member>".to_string());
+    };
+    archive::tar_delete(archive, member)
 }
 
 fn zip_shim(args: &[String]) -> Result<(), String> {

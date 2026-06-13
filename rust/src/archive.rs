@@ -85,17 +85,170 @@ pub fn extract(archive: &str, dest: &str) -> Result<(), String> {
         return zip_extract(file, dest);
     }
 
-    let reader: Box<dyn Read> = match format {
+    let mut tar = tar::Archive::new(tar_reader(file, format));
+    tar.set_preserve_permissions(true);
+    // unpack guards against path traversal and overwrites like `tar -xf`
+    tar.unpack(dest).map_err(|e| e.to_string())
+}
+
+/// Wrap `file` in the right decompressor for `format` so the result yields raw
+/// tar bytes. `format` must be a tar variant (Zip has no tar stream).
+fn tar_reader(file: File, format: Format) -> Box<dyn Read> {
+    match format {
         Format::Tar => Box::new(file),
         Format::TarGz => Box::new(flate2::read::GzDecoder::new(file)),
         Format::TarBz2 => Box::new(bzip2::read::BzDecoder::new(file)),
         Format::TarXz => Box::new(xz2::read::XzDecoder::new(file)),
-        Format::Zip => unreachable!(),
-    };
-    let mut tar = tar::Archive::new(reader);
-    tar.set_preserve_permissions(true);
-    // unpack guards against path traversal and overwrites like `tar -xf`
-    tar.unpack(dest).map_err(|e| e.to_string())
+        Format::Zip => unreachable!("tar_reader called with zip format"),
+    }
+}
+
+/// Open `archive` as a tar stream, rejecting zip and unknown extensions.
+fn open_tar(archive: &str) -> Result<(tar::Archive<Box<dyn Read>>, Format), String> {
+    let format = detect_format(archive)
+        .ok_or_else(|| format!("unsupported archive extension: {}", archive))?;
+    if format == Format::Zip {
+        return Err(format!("not a tar archive: {}", archive));
+    }
+    let archive_path = Path::new(archive);
+    let file = File::open(archive_path).map_err(|e| io_err(archive_path, e))?;
+    Ok((tar::Archive::new(tar_reader(file, format)), format))
+}
+
+fn entry_display_name(entry: &tar::Entry<'_, Box<dyn Read>>) -> Result<String, String> {
+    let path = entry.path().map_err(|e| e.to_string())?;
+    let mut name = path.to_string_lossy().replace('\\', "/");
+    // mark directories with a trailing slash so the browser can tell them apart
+    if entry.header().entry_type().is_dir() && !name.ends_with('/') {
+        name.push('/');
+    }
+    Ok(name)
+}
+
+/// List entry names of a tar archive, one per line. Directory entries keep a
+/// trailing `/`. Handles plain `.tar` and gz/bz2/xz variants transparently.
+pub fn tar_list(archive: &str) -> Result<Vec<String>, String> {
+    let (mut tar, _) = open_tar(archive)?;
+    let mut names = Vec::new();
+    for entry in tar.entries().map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        names.push(entry_display_name(&entry)?);
+    }
+    Ok(names)
+}
+
+/// Stream one entry's bytes to `out`.
+pub fn tar_read<W: Write>(archive: &str, member: &str, out: &mut W) -> Result<(), String> {
+    let (mut tar, _) = open_tar(archive)?;
+    for entry in tar.entries().map_err(|e| e.to_string())? {
+        let mut entry = entry.map_err(|e| e.to_string())?;
+        let name = entry.path().map_err(|e| e.to_string())?.to_string_lossy().replace('\\', "/");
+        if name == member {
+            io::copy(&mut entry, out).map_err(|e| e.to_string())?;
+            return Ok(());
+        }
+    }
+    Err(format!("entry not found in archive: {}", member))
+}
+
+/// Remove `member` from the archive in place, rebuilding the tar stream.
+pub fn tar_delete(archive: &str, member: &str) -> Result<(), String> {
+    tar_rewrite(archive, member, None)
+}
+
+/// Add or replace `member` in the archive, reading the new content from `src`.
+pub fn tar_update(archive: &str, member: &str, src: &str) -> Result<(), String> {
+    tar_rewrite(archive, member, Some(src))
+}
+
+/// Rebuild `archive` copying every entry except `member`, then (if `src` is set)
+/// append a fresh `member` from `src`. Recompresses to match the original format
+/// and atomically replaces it.
+fn tar_rewrite(archive: &str, member: &str, src: Option<&str>) -> Result<(), String> {
+    let (mut reader, format) = open_tar(archive)?;
+    let archive_path = Path::new(archive);
+    let tmp_path = archive_path.with_extension("dired-tar-tmp");
+    let out = File::create(&tmp_path).map_err(|e| io_err(&tmp_path, e))?;
+
+    let result = (|| -> Result<(), String> {
+        let mut builder = tar::Builder::new(tar_writer(out, format));
+        builder.follow_symlinks(false);
+        for entry in reader.entries().map_err(|e| e.to_string())? {
+            let mut entry = entry.map_err(|e| e.to_string())?;
+            let name = entry.path().map_err(|e| e.to_string())?.to_string_lossy().replace('\\', "/");
+            if name == member {
+                continue;
+            }
+            let header = entry.header().clone();
+            builder
+                .append(&header, &mut entry)
+                .map_err(|e| e.to_string())?;
+        }
+        if let Some(src) = src {
+            let src_path = Path::new(src);
+            let mut file = File::open(src_path).map_err(|e| io_err(src_path, e))?;
+            builder
+                .append_file(member, &mut file)
+                .map_err(|e| io_err(src_path, e))?;
+        }
+        // into_inner flushes the tar; finish_encoder completes any compressor
+        let encoder = builder.into_inner().map_err(|e| e.to_string())?;
+        finish_encoder(encoder)
+    })();
+
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp_path);
+        return result;
+    }
+    std::fs::rename(&tmp_path, archive_path).map_err(|e| io_err(archive_path, e))
+}
+
+/// A tar output sink that recompresses to match `format` on `finish_encoder`.
+enum TarWriter {
+    Plain(File),
+    Gz(flate2::write::GzEncoder<File>),
+    Bz2(bzip2::write::BzEncoder<File>),
+    Xz(xz2::write::XzEncoder<File>),
+}
+
+impl Write for TarWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        match self {
+            TarWriter::Plain(w) => w.write(buf),
+            TarWriter::Gz(w) => w.write(buf),
+            TarWriter::Bz2(w) => w.write(buf),
+            TarWriter::Xz(w) => w.write(buf),
+        }
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        match self {
+            TarWriter::Plain(w) => w.flush(),
+            TarWriter::Gz(w) => w.flush(),
+            TarWriter::Bz2(w) => w.flush(),
+            TarWriter::Xz(w) => w.flush(),
+        }
+    }
+}
+
+fn tar_writer(out: File, format: Format) -> TarWriter {
+    match format {
+        Format::Tar => TarWriter::Plain(out),
+        Format::TarGz => {
+            TarWriter::Gz(flate2::write::GzEncoder::new(out, flate2::Compression::default()))
+        }
+        Format::TarBz2 => TarWriter::Bz2(bzip2::write::BzEncoder::new(out, bzip2::Compression::default())),
+        Format::TarXz => TarWriter::Xz(xz2::write::XzEncoder::new(out, 6)),
+        Format::Zip => unreachable!("tar_writer called with zip format"),
+    }
+}
+
+fn finish_encoder(writer: TarWriter) -> Result<(), String> {
+    match writer {
+        TarWriter::Plain(_) => Ok(()),
+        TarWriter::Gz(w) => w.finish().map(|_| ()).map_err(|e| e.to_string()),
+        TarWriter::Bz2(w) => w.finish().map(|_| ()).map_err(|e| e.to_string()),
+        TarWriter::Xz(w) => w.finish().map(|_| ()).map_err(|e| e.to_string()),
+    }
 }
 
 /// List entry names of a zip archive, one per line (unzip -Z1 parity).

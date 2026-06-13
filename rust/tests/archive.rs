@@ -209,3 +209,80 @@ fn zip_delete_removes_entry() {
     archive::zip_read(&zip, "src/b.txt", &mut buf).unwrap();
     assert_eq!(buf, b"bravo");
 }
+
+// Build a tar of the given extension from setup_tree; returns (tempdir, path).
+fn make_tar(ext: &str) -> (tempfile::TempDir, String) {
+    let tmp = tempfile::tempdir().unwrap();
+    let cwd = tmp.path().join("in");
+    setup_tree(&cwd);
+    let archive_path = tmp.path().join(format!("out.{}", ext));
+    archive::create(
+        archive_path.to_str().unwrap(),
+        &["a.txt".to_string(), "src".to_string()],
+        cwd.to_str().unwrap(),
+    )
+    .unwrap();
+    let path = archive_path.to_str().unwrap().to_string();
+    (tmp, path)
+}
+
+fn tar_browse_cycle(ext: &str) {
+    let (tmp, tar) = make_tar(ext);
+
+    // list: files present, directories carry a trailing slash
+    let names = archive::tar_list(&tar).unwrap();
+    assert!(names.contains(&"a.txt".to_string()));
+    assert!(names.contains(&"src/b.txt".to_string()));
+    assert!(names.iter().any(|n| n.ends_with('/')));
+
+    // read
+    let mut buf = Vec::new();
+    archive::tar_read(&tar, "src/b.txt", &mut buf).unwrap();
+    assert_eq!(buf, b"bravo");
+    assert!(archive::tar_read(&tar, "nope.txt", &mut Vec::new()).is_err());
+
+    // update: replace one entry, others survive, no duplicate
+    let src = tmp.path().join("new.txt");
+    fs::write(&src, "BRAVO2").unwrap();
+    archive::tar_update(&tar, "src/b.txt", src.to_str().unwrap()).unwrap();
+    let mut buf = Vec::new();
+    archive::tar_read(&tar, "src/b.txt", &mut buf).unwrap();
+    assert_eq!(buf, b"BRAVO2");
+    let names = archive::tar_list(&tar).unwrap();
+    assert_eq!(names.iter().filter(|n| *n == "src/b.txt").count(), 1);
+    assert!(names.contains(&"a.txt".to_string()));
+
+    // delete: entry gone, archive still readable
+    archive::tar_delete(&tar, "a.txt").unwrap();
+    let names = archive::tar_list(&tar).unwrap();
+    assert!(!names.contains(&"a.txt".to_string()));
+    let mut buf = Vec::new();
+    archive::tar_read(&tar, "src/sub/c.txt", &mut buf).unwrap();
+    assert_eq!(buf, b"charlie");
+}
+
+#[test]
+fn tar_browse_plain() {
+    tar_browse_cycle("tar");
+}
+
+#[test]
+fn tar_browse_gz() {
+    tar_browse_cycle("tar.gz");
+}
+
+#[test]
+fn tar_browse_bz2() {
+    tar_browse_cycle("tar.bz2");
+}
+
+#[test]
+fn tar_browse_xz() {
+    tar_browse_cycle("tar.xz");
+}
+
+#[test]
+fn tar_list_rejects_zip() {
+    let (_tmp, zip) = make_zip();
+    assert!(archive::tar_list(&zip).is_err());
+}

@@ -286,6 +286,9 @@ function M.setup(opts)
         vim.g.zip_extractcmd = core_bin
     end
 
+    -- Sidecar-backed tar browser (replaces tar.vim, no system gzip/bzip2/xz).
+    require("dired.tarview").setup()
+
     vim.g.dired_loaded = true
 end
 
