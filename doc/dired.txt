@@ -1,4 +1,4 @@
-*dired.txt*              For NVIM v0.8.0             Last change: 2026 June 12
+*dired.txt*              For NVIM v0.8.0             Last change: 2026 June 13
 
 ==============================================================================
 Table of Contents                                    *dired-table-of-contents*
@@ -28,13 +28,20 @@ Different types of files in dired.nvim
 INSTALLATION                                   *dired-dired.nvim-installation*
 
 Requires Neovim 0.10 <https://github.com/neovim/neovim/releases/tag/v0.10.0> or
-higher.
+higher. The plugin uses a small native helper binary; the `build` step below
+downloads a prebuilt binary for your platform and falls back to compiling it
+with a Rust toolchain <https://rustup.rs> (`cargo`) if no prebuilt binary is
+available.
 
 
   lazy.nvim <https://github.com/folke/lazy.nvim>
 >lua
     {
         "X3eRo0/dired.nvim",
+        build = function(plugin)
+            vim.opt.runtimepath:append(plugin.dir)
+            require("dired.install").install(plugin.dir)
+        end,
         dependencies = {
             { "ej-shafran/compile-mode.nvim", version = "^5.0.0" },
         },
@@ -287,9 +294,9 @@ The default keybinds are given below.
 
 `DiredCompress` supports `.zip`, `.tar`, `.tar.gz`, `.tgz`, `.tar.bz2`,
 `.tbz2`, `.tar.xz`, and `.txz`. `DiredChmod` and `DiredTouch` have no default
-keybindings, but can be configured with `dired_chmod` and `dired_touch`. ZIP
-operations use `zip`/`unzip` when available and fall back to bsdtar
-(preinstalled on Windows 10+ and macOS); TAR formats require `tar`.
+keybindings, but can be configured with `dired_chmod` and `dired_touch`.
+Archive support is built into the plugin’s native core — no external
+`tar`/`zip`/`unzip` tools are needed.
 
 
 ==============================================================================
