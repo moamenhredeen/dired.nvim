@@ -98,6 +98,109 @@ pub fn extract(archive: &str, dest: &str) -> Result<(), String> {
     tar.unpack(dest).map_err(|e| e.to_string())
 }
 
+/// List entry names of a zip archive, one per line (unzip -Z1 parity).
+/// Directory entries keep their trailing `/` so callers can tell them apart.
+pub fn zip_list(archive: &str) -> Result<Vec<String>, String> {
+    let archive_path = Path::new(archive);
+    let file = File::open(archive_path).map_err(|e| io_err(archive_path, e))?;
+    let mut zip = zip::ZipArchive::new(file).map_err(|e| e.to_string())?;
+    let mut names = Vec::with_capacity(zip.len());
+    for i in 0..zip.len() {
+        let entry = zip.by_index(i).map_err(|e| e.to_string())?;
+        names.push(entry.name().to_string());
+    }
+    Ok(names)
+}
+
+/// Stream one entry's bytes to `out` (unzip -p parity).
+pub fn zip_read<W: Write>(archive: &str, name: &str, out: &mut W) -> Result<(), String> {
+    let archive_path = Path::new(archive);
+    let file = File::open(archive_path).map_err(|e| io_err(archive_path, e))?;
+    let mut zip = zip::ZipArchive::new(file).map_err(|e| e.to_string())?;
+    let mut entry = zip
+        .by_name(name)
+        .map_err(|_| format!("entry not found in archive: {}", name))?;
+    io::copy(&mut entry, out).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Extract one entry to `dest_dir`, preserving its in-archive path and
+/// overwriting any existing file (unzip -o parity).
+pub fn zip_extract_entry(archive: &str, name: &str, dest_dir: &Path) -> Result<(), String> {
+    let archive_path = Path::new(archive);
+    let file = File::open(archive_path).map_err(|e| io_err(archive_path, e))?;
+    let mut zip = zip::ZipArchive::new(file).map_err(|e| e.to_string())?;
+    let mut entry = zip
+        .by_name(name)
+        .map_err(|_| format!("entry not found in archive: {}", name))?;
+    // None = unsafe path (zip-slip); refuse rather than escape dest_dir
+    let rel = entry
+        .enclosed_name()
+        .ok_or_else(|| format!("unsafe entry path: {}", name))?;
+    let out = dest_dir.join(rel);
+    if entry.is_dir() {
+        std::fs::create_dir_all(&out).map_err(|e| io_err(&out, e))?;
+        return Ok(());
+    }
+    if let Some(parent) = out.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| io_err(parent, e))?;
+    }
+    let mut writer = File::create(&out).map_err(|e| io_err(&out, e))?;
+    io::copy(&mut entry, &mut writer).map_err(|e| io_err(&out, e))?;
+    #[cfg(unix)]
+    if let Some(mode) = entry.unix_mode() {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&out, std::fs::Permissions::from_mode(mode & 0o7777));
+    }
+    Ok(())
+}
+
+/// Remove `name` from the archive in place (zip -d parity). Rebuilds the
+/// archive copying every other entry verbatim.
+pub fn zip_delete(archive: &str, name: &str) -> Result<(), String> {
+    zip_rewrite(archive, &[name], None)
+}
+
+/// Add or replace `name` in the archive, reading the new content from
+/// `cwd/name` (zip -u parity). Any existing entry with that name is dropped
+/// first so the result holds a single, current copy.
+pub fn zip_update(archive: &str, name: &str, cwd: &Path) -> Result<(), String> {
+    zip_rewrite(archive, &[name], Some((name, cwd)))
+}
+
+/// Copy `archive` into a sibling temp file, skipping entries in `drop`, then
+/// optionally append a fresh file, then atomically replace the original.
+fn zip_rewrite(archive: &str, drop: &[&str], add: Option<(&str, &Path)>) -> Result<(), String> {
+    let archive_path = Path::new(archive);
+    let src = File::open(archive_path).map_err(|e| io_err(archive_path, e))?;
+    let mut reader = zip::ZipArchive::new(src).map_err(|e| e.to_string())?;
+
+    let tmp_path = archive_path.with_extension("dired-zip-tmp");
+    let tmp = File::create(&tmp_path).map_err(|e| io_err(&tmp_path, e))?;
+    let mut writer = zip::ZipWriter::new(tmp);
+
+    let result = (|| -> Result<(), String> {
+        for i in 0..reader.len() {
+            let entry = reader.by_index_raw(i).map_err(|e| e.to_string())?;
+            if drop.contains(&entry.name()) {
+                continue;
+            }
+            // raw_copy keeps the original compressed bytes and metadata
+            writer.raw_copy_file(entry).map_err(|e| e.to_string())?;
+        }
+        if let Some((name, cwd)) = add {
+            zip_add(&mut writer, cwd, name)?;
+        }
+        writer.finish().map(|_| ()).map_err(|e| e.to_string())
+    })();
+
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp_path);
+        return result;
+    }
+    std::fs::rename(&tmp_path, archive_path).map_err(|e| io_err(archive_path, e))
+}
+
 fn tar_create<W: Write>(writer: W, files: &[String], cwd: &Path) -> Result<W, String> {
     let mut builder = tar::Builder::new(writer);
     builder.follow_symlinks(false);

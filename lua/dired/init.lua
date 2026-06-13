@@ -273,6 +273,19 @@ function M.setup(opts)
     })
 
     vim.cmd([[if exists('#FileExplorer') | execute 'autocmd! FileExplorer *' | endif]])
+
+    -- Route Vim's built-in zip.vim through the native sidecar so browsing into a
+    -- .zip works without system unzip/zip (notably on Windows). zip#Browse runs
+    -- executable() on the whole var, so it must be the bare binary; the sidecar
+    -- dispatches by the leading flag zip.vim passes (-Z1/-p/-o/-d/-u). Only
+    -- override when the binary is present, else leave zip.vim's defaults intact.
+    local core_bin = require("dired.core").bin
+    if vim.fn.executable(core_bin) == 1 then
+        vim.g.zip_unzipcmd = core_bin
+        vim.g.zip_zipcmd = core_bin
+        vim.g.zip_extractcmd = core_bin
+    end
+
     vim.g.dired_loaded = true
 end
 
