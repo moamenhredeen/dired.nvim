@@ -6,13 +6,25 @@ on:
   pull_request:
 
 jobs:
-  test:
+  rust:
+    name: rust
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - name: Test
+        run: cargo test --manifest-path rust/Cargo.toml
+
+  lua:
+    name: nvim ${{ matrix.neovim_version }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         neovim_version: ["stable", "nightly"]
-    name: nvim ${{ matrix.neovim_version }}
     # nightly is informational: its breakage should not fail the workflow
     continue-on-error: ${{ matrix.neovim_version == 'nightly' }}
     steps:

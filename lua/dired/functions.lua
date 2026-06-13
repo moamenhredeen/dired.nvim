@@ -1,29 +1,20 @@
 local fs = require("dired.fs")
 local config = require("dired.config")
 local display = require("dired.display")
+local core = require("dired.core")
 
 local M = {}
 
 M.path_separator = config.get("path_separator")
 
-local archive_formats = {
-    [".zip"] = { kind = "zip" },
-    [".tar"] = { kind = "tar", create_flag = "-cf" },
-    [".tar.gz"] = { kind = "tar", create_flag = "-czf" },
-    [".tgz"] = { kind = "tar", create_flag = "-czf" },
-    [".tar.bz2"] = { kind = "tar", create_flag = "-cjf" },
-    [".tbz2"] = { kind = "tar", create_flag = "-cjf" },
-    [".tar.xz"] = { kind = "tar", create_flag = "-cJf" },
-    [".txz"] = { kind = "tar", create_flag = "-cJf" },
-}
-
 local archive_extensions = { ".tar.bz2", ".tar.gz", ".tar.xz", ".tbz2", ".tgz", ".txz", ".tar", ".zip" }
 
-local function get_archive_format(path)
+-- returns the matching extension, or nil if the path is not a supported archive
+local function get_archive_extension(path)
     local lower_path = path:lower()
     for _, extension in ipairs(archive_extensions) do
         if lower_path:sub(-#extension) == extension then
-            return archive_formats[extension], extension
+            return extension
         end
     end
 end
@@ -34,79 +25,6 @@ local function is_absolute_path(path)
         return true
     end
     return path:match("^%a:[/\\]") ~= nil
-end
-
--- bsdtar (Windows 10+, macOS) reads and writes zip archives; GNU tar (most
--- Linux distros) does not, so zip support there needs the zip/unzip tools.
-local tar_is_bsd
-local function has_bsdtar()
-    if tar_is_bsd == nil then
-        if vim.fn.executable("tar") == 1 then
-            tar_is_bsd = vim.fn.system({ "tar", "--version" }):lower():find("bsdtar", 1, true) ~= nil
-        else
-            tar_is_bsd = false
-        end
-    end
-    return tar_is_bsd
-end
-
-local function tar_exists()
-    if vim.fn.executable("tar") == 1 then
-        return true
-    end
-    vim.notify("Dired: `tar` is required for this operation.", vim.log.levels.ERROR)
-    return false
-end
-
--- returns the create command with the archive path appended, or nil
-local function get_create_command(format, archive_path)
-    if format.kind == "zip" then
-        if vim.fn.executable("zip") == 1 then
-            return { "zip", "-r", archive_path }
-        end
-        if has_bsdtar() then
-            return { "tar", "-a", "-cf", archive_path }
-        end
-        vim.notify("Dired: `zip` or bsdtar is required to create zip archives.", vim.log.levels.ERROR)
-        return nil
-    end
-    if not tar_exists() then
-        return nil
-    end
-    return { "tar", format.create_flag, archive_path }
-end
-
--- returns the full extract command, or nil
-local function get_extract_command(format, archive_path, destination)
-    if format.kind == "zip" then
-        if vim.fn.executable("unzip") == 1 then
-            return { "unzip", "-n", archive_path, "-d", destination }
-        end
-        if has_bsdtar() then
-            -- -k skips existing files, matching unzip -n
-            return { "tar", "-xkf", archive_path, "-C", destination }
-        end
-        vim.notify("Dired: `unzip` or bsdtar is required to extract zip archives.", vim.log.levels.ERROR)
-        return nil
-    end
-    if not tar_exists() then
-        return nil
-    end
-    return { "tar", "-xf", archive_path, "-C", destination }
-end
-
-local function run_process(args, cwd, callback)
-    vim.system(args, { cwd = cwd, text = true }, function(result)
-        vim.schedule(function()
-            if result.code ~= 0 then
-                local message = result.stderr ~= "" and result.stderr or result.stdout
-                vim.notify(vim.trim(message or "Command failed"), vim.log.levels.ERROR)
-                callback(false)
-                return
-            end
-            callback(true)
-        end)
-    end)
 end
 
 function M.compress_files(files, directory, callback)
@@ -131,8 +49,8 @@ function M.compress_files(files, directory, callback)
         archive_path = fs.join_paths(directory, archive_name)
     end
     archive_path = vim.fn.fnamemodify(archive_path, ":p")
-    local format, extension = get_archive_format(archive_path)
-    if not format then
+    local extension = get_archive_extension(archive_path)
+    if not extension then
         vim.notify("Dired: Unsupported archive extension.", vim.log.levels.ERROR)
         callback(false)
         return
@@ -150,17 +68,13 @@ function M.compress_files(files, directory, callback)
     if fs.file_exists(temporary_path) then
         vim.loop.fs_unlink(temporary_path)
     end
-    local args = get_create_command(format, temporary_path)
-    if not args then
-        callback(false)
-        return
-    end
-    table.insert(args, "--")
+
+    local file_names = {}
     for _, file in ipairs(files) do
-        table.insert(args, file.filename)
+        table.insert(file_names, file.filename)
     end
 
-    run_process(args, directory, function(success)
+    local function finalize(success)
         if not success then
             vim.loop.fs_unlink(temporary_path)
             callback(false)
@@ -199,6 +113,13 @@ function M.compress_files(files, directory, callback)
         end
         vim.notify(string.format("Dired: Created %s", archive_path))
         callback(true)
+    end
+
+    core.archive_create(temporary_path, file_names, directory, function(err)
+        if err then
+            vim.notify("Dired: " .. err, vim.log.levels.ERROR)
+        end
+        finalize(err == nil)
     end)
 end
 
@@ -228,20 +149,15 @@ function M.extract_files(files, directory, callback)
             return
         end
 
-        local format = get_archive_format(file.filepath)
-        if not format then
+        if not get_archive_extension(file.filepath) then
             vim.notify(string.format("Dired: Unsupported archive: %s", file.filename), vim.log.levels.ERROR)
             callback(false)
             return
         end
-        local args = get_extract_command(format, file.filepath, destination)
-        if not args then
-            callback(false)
-            return
-        end
 
-        run_process(args, directory, function(success)
-            if not success then
+        core.archive_extract(file.filepath, destination, function(err)
+            if err then
+                vim.notify("Dired: " .. err, vim.log.levels.ERROR)
                 callback(false)
                 return
             end
